@@ -21,7 +21,7 @@ Hace falta [FFmpeg](https://ffmpeg.org) (musika lo usa para el audio y el vídeo
 En Ubuntu (22.04 o posterior), el `.deb` se instala así y trae FFmpeg como dependencia:
 
 ```
-sudo apt install ./musika_0.1.0_amd64.deb
+sudo apt install ./musika_0.2.0_amd64.deb
 ```
 
 **Compilar a mano** (con [Rust](https://rustup.rs) instalado):
@@ -48,10 +48,11 @@ musika <canción> [opciones]
 | `-a, --artista` | Artista | etiqueta del archivo |
 | `-f, --formato` | `wav` (24 bits), `flac`, `mp3` (320 kbps) o `m4a` (AAC 256 kbps) | `wav` |
 | `-o, --dir` | Carpeta de salida | la de la canción |
-| `--caratula` | Imagen para la etiqueta central del disco | etiqueta con el título |
+| `--caratula` | Imagen para la etiqueta del disco y el fondo | etiqueta con el título |
 | `--color` | Color `RRGGBB` de la etiqueta y del fondo | `D9482B` |
 | `--video-formato` | `horizontal` (1920×1080), `vertical` (1080×1920) o `cuadrado` (1080×1080) | `horizontal` |
 | `--lufs`, `--pico` | Nivel a medida (LUFS y dBTP) | — |
+| `--forzar-nivel` | Llega siempre al nivel pedido aunque haya que comprimir | ganancia fija |
 | `--fuente` | Archivo `.ttf` para los textos del vídeo | una del sistema |
 | `-l, --listar` | Muestra los niveles de cada plataforma | |
 
@@ -69,7 +70,11 @@ Los archivos se llaman `<canción>_<plataforma>.<formato>` y `<canción>_video.m
 
 ## Qué hace con el audio
 
-Normalización de sonoridad en dos pasadas con el filtro `loudnorm` de FFmpeg (EBU R128): primero mide la canción y después aplica la ganancia necesaria para llegar al nivel de la plataforma sin pasar del pico máximo.
+Mide la canción según el estándar ITU-R BS.1770 (sonoridad integrada en LUFS y pico real en dBTP) y le aplica **una ganancia fija**: sube o baja toda la canción por igual, sin tocar la mezcla ni la dinámica, hasta el nivel de la plataforma.
+
+Si para llegar a ese nivel hubiera que superar el pico máximo, se queda en el punto más alto que el pico permite. Es lo mismo que hace Spotify al reproducir: sube las canciones flojas solo hasta donde deja el pico, dejando 1 dB de margen. Con `--forzar-nivel` se llega siempre al nivel, a cambio de comprimir los picos (filtro `loudnorm` de FFmpeg en dos pasadas).
+
+WAV y FLAC salen a 24 bits y con la frecuencia de muestreo del original.
 
 | Plataforma | Sonoridad (LUFS) | Pico máximo (dBTP) |
 |---|---|---|
@@ -81,13 +86,21 @@ Normalización de sonoridad en dos pasadas con el filtro `loudnorm` de FFmpeg (E
 | Deezer | −15 | −1 |
 | SoundCloud | −14 | −1 |
 
-Son los niveles de referencia habituales; las plataformas los cambian de vez en cuando, así que puedes fijar los tuyos con `--lufs` y `--pico`.
+Sobre estos números (revisados en noviembre de 2026):
 
-- **Ganancia lineal:** se sube o baja el volumen entero por igual; la dinámica de la mezcla no cambia. Es lo normal.
-- **Ajuste dinámico:** si la canción no puede llegar al nivel sin superar el pico, FFmpeg aplica una ganancia variable. El programa avisa cuando ocurre.
+- **Spotify** es la única que publica los suyos: [−14 LUFS y pico por debajo de −1 dBTP](https://support.spotify.com/artists/article/loudness-normalization/), o de −2 dBTP si el máster suena más fuerte que −14 LUFS.
+- **El resto** son los valores que manejan las guías de masterización; las plataformas no los documentan y pueden cambiarlos. En Amazon Music unas guías dan −1 dBTP y otras −2; aquí se usa −2, el más prudente. Sobre SoundCloud tampoco hay acuerdo en si normaliza.
+- **Un solo archivo a −14 LUFS y −1 dBTP sirve para casi todas.** Las plataformas ajustan el volumen al reproducir, así que no hace falta un archivo distinto para cada una; la única que se aparta de verdad es Apple Music (−16).
 
-musika solo ajusta el nivel: no ecualiza ni comprime. No sustituye a una masterización, deja la canción al volumen que espera cada plataforma.
+Puedes fijar tus propios valores con `--lufs` y `--pico`.
+
+musika solo ajusta el nivel: no ecualiza ni comprime (salvo con `--forzar-nivel`). No sustituye a una masterización; deja la canción al volumen que espera cada plataforma.
 
 ## El vídeo
 
-Un vinilo girando a 33⅓ rpm con el título y el artista, la forma de onda de la canción y, en la etiqueta central, la carátula que le pases (o el título si no pasas ninguna). H.264 a 30 fps con audio AAC a 320 kbps, usando el ajuste de YouTube si está entre las plataformas pedidas y, si no, el de la primera.
+Un tocadiscos visto desde arriba: el vinilo girando a 33⅓ rpm sobre el plato, con su brazo, el título y el artista, la forma de onda de la canción y una barra de progreso con el tiempo.
+
+- **Con `--caratula`**, la imagen va en la etiqueta central del disco y, desenfocada, de fondo.
+- **Sin carátula**, la etiqueta lleva el título y el fondo es un degradado del color elegido con `--color`.
+
+H.264 a 30 fps con audio AAC a 320 kbps, usando el ajuste de YouTube si está entre las plataformas pedidas y, si no, el de la primera.

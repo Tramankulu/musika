@@ -6,7 +6,6 @@
 
 mod imagen;
 
-use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -65,6 +64,7 @@ struct Opciones {
     lufs: Option<f64>,
     pico: Option<f64>,
     fuente: Option<PathBuf>,
+    forzar: bool,
 }
 
 const AYUDA: &str = "\
@@ -83,11 +83,13 @@ OPCIONES:
     -a, --artista <texto>       Artista
     -f, --formato <fmt>         wav | flac | mp3 | m4a           [por defecto: wav]
     -o, --dir <carpeta>         Carpeta de salida (por defecto: la de la canción)
-        --caratula <imagen>     Imagen para la etiqueta central del disco
+        --caratula <imagen>     Imagen para la etiqueta del disco y el fondo del vídeo
         --color <RRGGBB>        Color de la etiqueta y del fondo  [por defecto: D9482B]
         --video-formato <f>     horizontal (1920x1080) | vertical (1080x1920) | cuadrado (1080x1080)
         --lufs <n>              Sonoridad a medida, p. ej. -14 (crea la salida «personalizado»)
         --pico <n>              Pico real máximo a medida en dBTP, p. ej. -1
+        --forzar-nivel          Llega siempre al nivel pedido aunque haya que comprimir
+                                (por defecto solo se aplica una ganancia fija)
         --fuente <archivo.ttf>  Tipografía para los textos del vídeo
     -l, --listar                Muestra los niveles de cada plataforma
     -h, --ayuda                 Muestra esta ayuda
@@ -130,6 +132,7 @@ fn opciones_por_defecto(entrada: PathBuf) -> Opciones {
         lufs: None,
         pico: None,
         fuente: None,
+        forzar: false,
     }
 }
 
@@ -177,6 +180,7 @@ fn parsear_args(args: &[String]) -> Res<Option<Opciones>> {
             "--lufs" => o.lufs = Some(numero(&valor()?, "--lufs")?),
             "--pico" => o.pico = Some(numero(&valor()?, "--pico")?),
             "--fuente" => o.fuente = Some(PathBuf::from(valor()?)),
+            "--forzar-nivel" => o.forzar = true,
             _ if a.starts_with('-') && a.len() > 1 => {
                 return Err(format!("Opción desconocida: {a}\nUsa --ayuda para ver las opciones."))
             }
@@ -372,9 +376,9 @@ fn campo_num(texto: &str, clave: &str) -> Res<f64> {
     Ok(n)
 }
 
-/// Primera pasada: mide la canción.
-fn medir(ff: &Ff, tmp: &Path, entrada: &Path, ob: &Objetivo) -> Res<Medida> {
-    let filtro = format!("loudnorm=I={}:TP={}:LRA=11:print_format=json", ob.lufs, ob.pico);
+/// Mide la sonoridad, el pico real y el rango dinámico de la canción.
+fn medir(ff: &Ff, tmp: &Path, entrada: &Path, lufs: f64, pico: f64) -> Res<Medida> {
+    let filtro = format!("loudnorm=I={lufs}:TP={pico}:LRA=11:print_format=json");
     let mut args = vec!["-i".to_string(), ruta(entrada)];
     args.extend(["-map", "0:a:0", "-af", &filtro, "-f", "null", "-"].map(String::from));
     let salida = ffmpeg(ff, tmp, &args)?;
@@ -387,10 +391,21 @@ fn medir(ff: &Ff, tmp: &Path, entrada: &Path, ob: &Objetivo) -> Res<Medida> {
     })
 }
 
+#[derive(PartialEq)]
+enum Modo {
+    /// Ganancia fija que llega al nivel de la plataforma.
+    Fija,
+    /// Ganancia fija que se queda corta para no superar el pico máximo.
+    Limitada,
+    /// Ganancia variable (compresión) para llegar al nivel a toda costa.
+    Dinamica,
+}
+
 struct Resultado {
     lufs: f64,
     pico: f64,
-    lineal: bool,
+    ganancia: Option<f64>,
+    modo: Modo,
 }
 
 fn codec_audio(formato: &str) -> Res<Vec<&'static str>> {
@@ -403,40 +418,67 @@ fn codec_audio(formato: &str) -> Res<Vec<&'static str>> {
     })
 }
 
-/// Segunda pasada: aplica la ganancia con los valores medidos y escribe el archivo.
-#[allow(clippy::too_many_arguments)]
-fn masterizar(
-    ff: &Ff,
-    tmp: &Path,
-    entrada: &Path,
-    destino: &Path,
-    ob: &Objetivo,
-    m: &Medida,
-    formato: &str,
-    frecuencia: u32,
-    etiquetas: &[(&str, &str)],
-) -> Res<Resultado> {
-    // Con un LRA objetivo >= al medido, loudnorm trabaja en modo lineal
-    // (una ganancia fija, sin tocar la dinámica) siempre que el pico lo permita.
-    let lra = m.lra.clamp(11.0, 50.0);
-    let filtro = format!(
-        "loudnorm=I={}:TP={}:LRA={lra}:measured_I={}:measured_TP={}:measured_LRA={}:\
-         measured_thresh={}:offset={}:linear=true:print_format=json",
-        ob.lufs, ob.pico, m.i, m.tp, m.lra, m.umbral, m.offset
-    );
+struct Destino<'a> {
+    archivo: &'a Path,
+    formato: &'a str,
+    /// Frecuencia de muestreo; `None` conserva la del original.
+    frecuencia: Option<u32>,
+    etiquetas: &'a [(&'a str, &'a str)],
+}
+
+/// Ajusta la canción al objetivo y la escribe.
+///
+/// Lo normal es una ganancia fija: sube o baja todo por igual, sin tocar la
+/// dinámica, hasta el nivel de la plataforma o hasta donde deje el pico
+/// máximo (es lo mismo que hacen las plataformas al reproducir). Solo con
+/// `forzar` se recurre a la ganancia variable de loudnorm.
+fn ajustar(ff: &Ff, tmp: &Path, entrada: &Path, ob: &Objetivo, m: &Medida, d: &Destino, forzar: bool) -> Res<Resultado> {
+    let necesaria = ob.lufs - m.i;
+    let maxima = ob.pico - m.tp;
+    let dinamica = forzar && necesaria > maxima;
+
+    let (filtro, medida_dinamica);
+    if dinamica {
+        medida_dinamica = medir(ff, tmp, entrada, ob.lufs, ob.pico)?;
+        let m = &medida_dinamica;
+        filtro = format!(
+            "loudnorm=I={}:TP={}:LRA={}:measured_I={}:measured_TP={}:measured_LRA={}:\
+             measured_thresh={}:offset={}:linear=true:print_format=json",
+            ob.lufs, ob.pico, m.lra.clamp(11.0, 50.0), m.i, m.tp, m.lra, m.umbral, m.offset
+        );
+    } else {
+        filtro = format!("volume={:.2}dB", necesaria.min(maxima));
+    }
+
     let mut args = vec!["-i".to_string(), ruta(entrada)];
     args.extend(["-map", "0:a:0", "-vn", "-map_metadata", "0", "-af", &filtro].map(String::from));
-    args.extend(["-ar".to_string(), frecuencia.to_string()]);
-    for (k, v) in etiquetas {
+    match d.frecuencia {
+        Some(f) => args.extend(["-ar".to_string(), f.to_string()]),
+        // loudnorm trabaja internamente a 192 kHz: hay que volver a una frecuencia normal.
+        None if dinamica => args.extend(["-ar", "48000"].map(String::from)),
+        None => {}
+    }
+    for (k, v) in d.etiquetas {
         args.extend(["-metadata".to_string(), format!("{k}={v}")]);
     }
-    args.extend(codec_audio(formato)?.into_iter().map(String::from));
-    args.push(ruta(destino));
+    args.extend(codec_audio(d.formato)?.into_iter().map(String::from));
+    args.push(ruta(d.archivo));
     let salida = ffmpeg(ff, tmp, &args)?;
+
+    if dinamica {
+        return Ok(Resultado {
+            lufs: campo_num(&salida, "output_i")?,
+            pico: campo_num(&salida, "output_tp")?,
+            ganancia: None,
+            modo: Modo::Dinamica,
+        });
+    }
+    let g = necesaria.min(maxima);
     Ok(Resultado {
-        lufs: campo_num(&salida, "output_i")?,
-        pico: campo_num(&salida, "output_tp")?,
-        lineal: campo_json(&salida, "normalization_type").is_some_and(|t| t == "linear"),
+        lufs: m.i + g,
+        pico: m.tp + g,
+        ganancia: Some(g),
+        modo: if necesaria <= maxima { Modo::Fija } else { Modo::Limitada },
     })
 }
 
@@ -451,22 +493,27 @@ struct Diseno {
     texto_cx: usize,
     texto_ancho: usize,
     titulo_y: usize,
+    titulo_max: f64,
     ondas: (usize, usize, usize, usize), // x, y, ancho, alto
+    barra: (usize, usize, usize),        // x, y, ancho
 }
 
 fn diseno(formato: &str) -> Res<Diseno> {
     Ok(match formato {
         "horizontal" => Diseno {
-            ancho: 1920, alto: 1080, disco: 820, disco_x: 120, disco_y: 130,
-            texto_cx: 1430, texto_ancho: 800, titulo_y: 390, ondas: (1050, 640, 760, 160),
+            ancho: 1920, alto: 1080, disco: 820, disco_x: 110, disco_y: 130,
+            texto_cx: 1450, texto_ancho: 720, titulo_y: 370, titulo_max: 80.0,
+            ondas: (1090, 590, 720, 130), barra: (1090, 770, 720),
         },
         "vertical" => Diseno {
-            ancho: 1080, alto: 1920, disco: 900, disco_x: 90, disco_y: 260,
-            texto_cx: 540, texto_ancho: 960, titulo_y: 1290, ondas: (60, 1540, 960, 200),
+            ancho: 1080, alto: 1920, disco: 800, disco_x: 110, disco_y: 230,
+            texto_cx: 540, texto_ancho: 920, titulo_y: 1180, titulo_max: 80.0,
+            ondas: (80, 1420, 920, 160), barra: (80, 1640, 920),
         },
         "cuadrado" => Diseno {
-            ancho: 1080, alto: 1080, disco: 640, disco_x: 220, disco_y: 60,
-            texto_cx: 540, texto_ancho: 980, titulo_y: 760, ondas: (50, 930, 980, 120),
+            ancho: 1080, alto: 1080, disco: 600, disco_x: 200, disco_y: 50,
+            texto_cx: 540, texto_ancho: 900, titulo_y: 700, titulo_max: 60.0,
+            ondas: (140, 850, 800, 90), barra: (140, 975, 800),
         },
         _ => return Err(format!("Formato de vídeo no válido «{formato}»: usa horizontal, vertical o cuadrado")),
     })
@@ -530,20 +577,32 @@ struct Video<'a> {
     duracion: Option<f64>,
 }
 
+fn mm_ss(segundos: f64) -> String {
+    let t = segundos.round() as u64;
+    format!("{:02}:{:02}", t / 60, t % 60)
+}
+
 fn crear_video(ff: &Ff, tmp: &Path, o: &Opciones, v: &Video) -> Res<()> {
     let d = diseno(&o.video_formato)?;
     let lado = d.disco;
     let escribir = |nombre: &str, datos: &[u8]| {
         std::fs::write(tmp.join(nombre), datos).map_err(|e| format!("No se pudo escribir un archivo temporal: {e}"))
     };
-
-    // Imágenes base.
     let png = |nombre: &str, w: usize, h: usize, px: &[u8]| {
         imagen::escribir_png(&tmp.join(nombre), w, h, px).map_err(|e| format!("No se pudo crear {nombre}: {e}"))
     };
+    let caratula = match &o.caratula {
+        Some(c) if !c.is_file() => return Err(format!("No existe la imagen {}", c.display())),
+        Some(c) => Some(ruta(&absoluta(c)?)),
+        None => None,
+    };
+
+    // Imágenes base: disco, fondo con el plato y brazo.
+    let centro = (d.disco_x as f64 + lado as f64 / 2.0, d.disco_y as f64 + lado as f64 / 2.0, lado as f64 / 2.0);
     png("disco.png", lado, lado, &imagen::dibujar_disco(lado, o.color))?;
-    let centro = (d.disco_x as f64 + lado as f64 / 2.0, d.disco_y as f64 + lado as f64 / 2.0);
-    png("fondo.png", d.ancho, d.alto, &imagen::dibujar_fondo(d.ancho, d.alto, o.color, (centro.0, centro.1, lado as f64 / 2.0)))?;
+    png("fondo.png", d.ancho, d.alto, &imagen::dibujar_fondo(d.ancho, d.alto, o.color, centro, caratula.is_some()))?;
+    let (bx, by, bw, bh, brazo) = imagen::dibujar_brazo((d.ancho, d.alto), centro, o.color);
+    png("brazo.png", bw, bh, &brazo)?;
 
     // Tipografía: se copia a la carpeta temporal para referirla por nombre y
     // no tener que escapar rutas (las de Windows llevan «:»).
@@ -555,21 +614,18 @@ fn crear_video(ff: &Ff, tmp: &Path, o: &Opciones, v: &Video) -> Res<()> {
         None => "",
     };
     // Los textos van en archivos para no tener que escapar nada.
-    let texto = |archivo: &str, contenido: &str, color: &str, cuerpo: u32, x: &str, y: &str| -> Res<String> {
+    let texto = |archivo: &str, contenido: &str, estilo: &str, cuerpo: u32, x: &str, y: &str| -> Res<String> {
         escribir(archivo, contenido.as_bytes())?;
-        Ok(format!(
-            "drawtext={fuente}textfile={archivo}:expansion=none:fontcolor={color}:fontsize={cuerpo}:x={x}:y={y}"
-        ))
+        Ok(format!("drawtext={fuente}textfile={archivo}:{estilo}:fontsize={cuerpo}:x={x}:y={y}"))
     };
+    let sombra = "shadowcolor=black@0.55:shadowx=0:shadowy=3";
 
-    // Etiqueta central: carátula recortada en círculo o, si no hay, textos.
+    // Etiqueta central y fondo: con carátula, la carátula recortada en círculo
+    // sobre el disco y desenfocada de fondo; sin ella, textos y degradado.
     let etiqueta = (lado as f64 * imagen::R_ETIQUETA * 0.9) as usize / 2 * 2;
-    let mut disco_listo = "disco.png".to_string();
+    let (mut disco_listo, mut fondo_listo) = ("disco.png", "fondo.png");
     let mut filtro_disco = String::from("format=rgba");
-    if let Some(caratula) = &o.caratula {
-        if !caratula.is_file() {
-            return Err(format!("No existe la imagen {}", caratula.display()));
-        }
+    if let Some(caratula) = &caratula {
         let (r, agujero) = (etiqueta as f64 / 2.0, lado as f64 / 2.0 * (imagen::R_AGUJERO + 0.008));
         let grafo = format!(
             "[1:v]scale={etiqueta}:{etiqueta}:force_original_aspect_ratio=increase,crop={etiqueta}:{etiqueta},format=rgba,\
@@ -577,14 +633,25 @@ fn crear_video(ff: &Ff, tmp: &Path, o: &Opciones, v: &Video) -> Res<()> {
              a='255*clip({r}-hypot(X-{r},Y-{r}),0,1)*clip(hypot(X-{r},Y-{r})-{agujero},0,1)'[c];\
              [0:v]format=rgba[d];[d][c]overlay=(W-w)/2:(H-h)/2:format=auto"
         );
-        let mut args: Vec<String> = ["-i", "disco.png", "-i"].map(String::from).to_vec();
-        args.push(ruta(&absoluta(caratula)?));
+        let mut args: Vec<String> = ["-i", "disco.png", "-i", caratula].map(String::from).to_vec();
         args.extend(["-filter_complex", &grafo, "-frames:v", "1", "-update", "1", "disco2.png"].map(String::from));
         ffmpeg(ff, tmp, &args).map_err(|e| format!("No se pudo usar la carátula. {e}"))?;
-        disco_listo = "disco2.png".into();
+        disco_listo = "disco2.png";
+
+        let grafo = format!(
+            "[1:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},gblur=sigma={s},\
+             eq=saturation=1.2,format=rgba[c];[c][0:v]overlay=format=auto",
+            w = d.ancho,
+            h = d.alto,
+            s = d.ancho.max(d.alto) / 40
+        );
+        let mut args: Vec<String> = ["-i", "fondo.png", "-i", caratula].map(String::from).to_vec();
+        args.extend(["-filter_complex", &grafo, "-frames:v", "1", "-update", "1", "fondo2.png"].map(String::from));
+        ffmpeg(ff, tmp, &args).map_err(|e| format!("No se pudo usar la carátula. {e}"))?;
+        fondo_listo = "fondo2.png";
     } else {
         let lum = 0.299 * o.color.0 as f64 + 0.587 * o.color.1 as f64 + 0.114 * o.color.2 as f64;
-        let tinta = if lum > 150.0 { "0x141414" } else { "white" };
+        let tinta = if lum > 150.0 { "expansion=none:fontcolor=0x141414" } else { "expansion=none:fontcolor=white" };
         let t = recortar(v.titulo, 22);
         let ct = cuerpo(etiqueta * 4 / 5, t.chars().count(), 12.0, lado as f64 * 0.040);
         let y = format!("h/2-{}-text_h/2", lado as f64 * 0.085);
@@ -597,15 +664,40 @@ fn crear_video(ff: &Ff, tmp: &Path, o: &Opciones, v: &Video) -> Res<()> {
         }
     }
 
+    // Color de acento: el de la etiqueta, aclarado para que destaque sobre el fondo.
+    let claro = |c: u8| (c as f64 + (255.0 - c as f64) * 0.45) as u8;
+    let acento = format!("0x{:02X}{:02X}{:02X}", claro(o.color.0), claro(o.color.1), claro(o.color.2));
+
     // Textos principales.
     let titulo = recortar(v.titulo, 44);
-    let ct = cuerpo(d.texto_ancho, titulo.chars().count(), 34.0, 84.0);
-    let mut textos = texto("titulo.txt", &titulo, "white", ct, &format!("{}-text_w/2", d.texto_cx), &d.titulo_y.to_string())?;
+    let ct = cuerpo(d.texto_ancho, titulo.chars().count(), 34.0, d.titulo_max);
+    let cx = format!("{}-text_w/2", d.texto_cx);
+    let estilo = format!("expansion=none:fontcolor=white:{sombra}");
+    let mut textos = texto("titulo.txt", &titulo, &estilo, ct, &cx, &d.titulo_y.to_string())?;
     if !v.artista.is_empty() {
         let artista = recortar(v.artista, 50);
-        let ca = cuerpo(d.texto_ancho, artista.chars().count(), 24.0, ct as f64 * 0.6);
-        let y = d.titulo_y + ct as usize + 34;
-        textos += &format!(",{}", texto("artista.txt", &artista, "white@0.7", ca, &format!("{}-text_w/2", d.texto_cx), &y.to_string())?);
+        let ca = cuerpo(d.texto_ancho, artista.chars().count(), 24.0, ct as f64 * 0.58);
+        let y = d.titulo_y + ct as usize + 30;
+        let estilo = format!("expansion=none:fontcolor={acento}:{sombra}");
+        textos += &format!(",{}", texto("artista.txt", &artista, &estilo, ca, &cx, &y.to_string())?);
+    }
+
+    // Barra de progreso con el tiempo transcurrido y el total.
+    let (px, py, pw) = d.barra;
+    let mut barra = String::from("[b3]null[b4];");
+    if let Some(dur) = v.duracion.filter(|t| *t > 1.0) {
+        barra = format!(
+            "color=c=white@0.22:s={pw}x6:r=30,format=rgba[pista];color=c={acento}:s={pw}x6:r=30,format=rgba[avance];\
+             [pista][avance]overlay=x='-w+w*t/{dur:.3}':y=0:format=auto[barra];\
+             [b3][barra]overlay={px}:{py}:format=auto[b4];"
+        );
+        let estilo = format!("fontcolor=white@0.75:{sombra}");
+        let y = (py + 22).to_string();
+        // %{{pts…}} lo expande FFmpeg en cada fotograma.
+        textos += &format!(",{}", texto("tiempo.txt", "%{pts:gmtime:0:%M\\:%S}", &estilo, 24, &px.to_string(), &y)?);
+        let estilo = format!("expansion=none:{estilo}");
+        let x = format!("{}-text_w", px + pw);
+        textos += &format!(",{}", texto("total.txt", &mm_ss(dur), &estilo, 24, &x, &y)?);
     }
 
     // 33⅓ rpm = 3,4907 rad/s.
@@ -613,15 +705,22 @@ fn crear_video(ff: &Ff, tmp: &Path, o: &Opciones, v: &Video) -> Res<()> {
     let grafo = format!(
         "[1:v]{filtro_disco},rotate=a=3.4907*t:c=black@0:ow=iw:oh=ih[disco];\
          [2:v][disco]overlay={}:{}:format=auto[b1];\
-         [0:a]showwaves=s={ow}x{oh}:mode=cline:rate=30:colors=white@0.55,format=rgba[ondas];\
-         [b1][ondas]overlay={ox}:{oy}:format=auto[b2];\
-         [b2]{textos},format=yuv420p[v]",
-        d.disco_x, d.disco_y
+         [b1][3:v]overlay={bx}:{by}:format=auto[b2];\
+         [0:a]aformat=channel_layouts=mono,showwaves=s={ow}x{oh}:mode=cline:draw=full:rate=30:colors=white,format=rgba,lutrgb=r={or}:g={og}:b={ob},colorchannelmixer=aa=0.8[ondas];\
+         [b2][ondas]overlay={ox}:{oy}:format=auto[b3];\
+         {barra}\
+         [b4]{textos},fade=t=in:d=0.8,format=yuv420p[v]",
+        d.disco_x,
+        d.disco_y,
+        or = claro(o.color.0),
+        og = claro(o.color.1),
+        ob = claro(o.color.2)
     );
 
     let mut args = vec!["-i".to_string(), ruta(v.audio)];
-    args.extend(["-loop", "1", "-framerate", "30", "-i", &disco_listo].map(String::from));
-    args.extend(["-loop", "1", "-framerate", "30", "-i", "fondo.png"].map(String::from));
+    for imagen in [disco_listo, fondo_listo, "brazo.png"] {
+        args.extend(["-loop", "1", "-framerate", "30", "-i", imagen].map(String::from));
+    }
     args.extend(["-filter_complex", &grafo, "-map", "[v]", "-map", "0:a:0"].map(String::from));
     args.extend(["-c:v", "libx264", "-preset", "medium", "-crf", "18", "-r", "30"].map(String::from));
     args.extend(["-c:a", "aac", "-b:a", "320k", "-ar", "48000", "-movflags", "+faststart"].map(String::from));
@@ -718,66 +817,64 @@ fn ejecutar(o: Opciones) -> Res<()> {
     let base = entrada.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "cancion".into());
     let titulo = o.titulo.clone().or(info.titulo.clone()).unwrap_or_else(|| base.clone());
     let artista = o.artista.clone().or(info.artista.clone()).unwrap_or_default();
-    let frecuencia = if info.frecuencia == Some(44100) { 44100 } else { 48000 };
+    // WAV y FLAC conservan la frecuencia del original; los formatos con pérdida van a 44,1 o 48 kHz.
+    let frecuencia = match o.formato.as_str() {
+        "wav" | "flac" => None,
+        _ => Some(if info.frecuencia == Some(44100) { 44100 } else { 48000 }),
+    };
     let mut etiquetas: Vec<(&str, &str)> = vec![("title", &titulo)];
     if !artista.is_empty() {
         etiquetas.push(("artist", &artista));
     }
 
     println!("Canción: {titulo}{}", if artista.is_empty() { String::new() } else { format!(" — {artista}") });
+    println!("Analizando la sonoridad…");
+    let m = medir(&ff, &tmp.0, &entrada, -14.0, -1.0)?;
+    println!("  Original: {:.1} LUFS, pico {:.1} dBTP, rango {:.1} LU\n", m.i, m.tp, m.lra);
 
-    // Las plataformas con el mismo objetivo comparten el análisis.
-    let mut medidas: HashMap<String, Medida> = HashMap::new();
-    let mut medir_una = |ob: &Objetivo| -> Res<Medida> {
-        let clave = format!("{}/{}", ob.lufs, ob.pico);
-        if let Some(m) = medidas.get(&clave) {
-            return Ok(m.clone());
-        }
-        let primera = medidas.is_empty();
-        if primera {
-            println!("Analizando la sonoridad…");
-        }
-        let m = medir(&ff, &tmp.0, &entrada, ob)?;
-        if primera {
-            println!("  Original: {:.1} LUFS, pico {:.1} dBTP, rango {:.1} LU\n", m.i, m.tp, m.lra);
-        }
-        medidas.insert(clave, m.clone());
-        Ok(m)
-    };
     let informe = |ob: &Objetivo, r: &Resultado, destino: &Path| {
+        let detalle = match (&r.modo, r.ganancia) {
+            (Modo::Dinamica, _) => "ajuste dinámico".to_string(),
+            (Modo::Limitada, Some(g)) => format!("{g:+.1} dB, al límite del pico"),
+            (_, Some(g)) => format!("{g:+.1} dB"),
+            _ => String::new(),
+        };
         println!(
-            "  ✔ {:<13} {:.1} LUFS, pico {:.1} dBTP ({})  →  {}",
+            "  ✔ {:<13} {:.1} LUFS, pico {:.1} dBTP ({detalle})  →  {}",
             ob.nombre,
             r.lufs,
             r.pico,
-            if r.lineal { "ganancia lineal" } else { "ajuste dinámico" },
             destino.display()
         );
     };
 
-    let mut dinamico = false;
+    let (mut limitada, mut dinamica) = (false, false);
+    let mut anotar = |r: &Resultado| {
+        limitada |= r.modo == Modo::Limitada;
+        dinamica |= r.modo == Modo::Dinamica;
+    };
     if o.salida != Salida::Video {
         println!("Preparando el audio:");
         for ob in &lista {
-            let m = medir_una(ob)?;
-            let destino = dir.join(format!("{base}_{}.{}", ob.id, o.formato));
-            if destino == entrada {
+            let archivo = dir.join(format!("{base}_{}.{}", ob.id, o.formato));
+            if archivo == entrada {
                 return Err("El archivo de salida coincidiría con el original; elige otra carpeta con --dir.".into());
             }
-            let r = masterizar(&ff, &tmp.0, &entrada, &destino, ob, &m, &o.formato, frecuencia, &etiquetas)?;
-            dinamico |= !r.lineal;
-            informe(ob, &r, &destino);
+            let d = Destino { archivo: &archivo, formato: &o.formato, frecuencia, etiquetas: &etiquetas };
+            let r = ajustar(&ff, &tmp.0, &entrada, ob, &m, &d, o.forzar)?;
+            anotar(&r);
+            informe(ob, &r, &archivo);
         }
     }
 
     if o.salida != Salida::Audio {
         // El vídeo lleva el ajuste de YouTube si se ha pedido; si no, el de la primera plataforma.
         let ob = lista.iter().find(|x| x.id == "youtube").unwrap_or(&lista[0]);
-        let m = medir_una(ob)?;
         println!("Preparando el vídeo (audio con el ajuste de {}):", ob.nombre);
         let master = tmp.0.join("master.wav");
-        let r = masterizar(&ff, &tmp.0, &entrada, &master, ob, &m, "wav", 48000, &[])?;
-        dinamico |= !r.lineal;
+        let d = Destino { archivo: &master, formato: "wav", frecuencia: Some(48000), etiquetas: &[] };
+        let r = ajustar(&ff, &tmp.0, &entrada, ob, &m, &d, o.forzar)?;
+        anotar(&r);
         let destino = dir.join(format!("{base}_video.mp4"));
         println!("  Dibujando el disco y codificando; puede tardar unos minutos…");
         let v = Video { audio: &master, destino: &destino, titulo: &titulo, artista: &artista, duracion: info.duracion };
@@ -785,10 +882,18 @@ fn ejecutar(o: Opciones) -> Res<()> {
         informe(ob, &r, &destino);
     }
 
-    if dinamico {
+    if limitada {
         println!(
-            "\nNota: «ajuste dinámico» indica que la canción no llegaba al nivel pedido sin superar\n\
-             el pico máximo, así que se ha aplicado una ganancia variable en lugar de una fija."
+            "\nNota: «al límite del pico» indica que la canción queda por debajo del nivel de la\n\
+             plataforma porque subirla más superaría el pico máximo. La dinámica queda intacta, y\n\
+             las plataformas tampoco la subirían más. Con --forzar-nivel se llega al nivel\n\
+             comprimiendo los picos."
+        );
+    }
+    if dinamica {
+        println!(
+            "\nNota: «ajuste dinámico» indica que, para llegar al nivel pedido sin superar el pico\n\
+             máximo, se ha aplicado una ganancia variable que reduce algo la dinámica."
         );
     }
     println!("\nListo.");
