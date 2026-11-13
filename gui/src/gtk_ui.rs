@@ -15,15 +15,6 @@ use std::time::{Duration, Instant};
 
 const ID: &str = "io.github.tramankulu.musika";
 
-const PLATAFORMAS: [(&str, &str); 7] = [
-    ("spotify", "Spotify"),
-    ("youtube", "YouTube"),
-    ("apple", "Apple Music"),
-    ("tidal", "Tidal"),
-    ("amazon", "Amazon Music"),
-    ("deezer", "Deezer"),
-    ("soundcloud", "SoundCloud"),
-];
 const FORMATOS: [(&str, &str); 4] = [
     ("wav", "WAV (24 bits)"),
     ("flac", "FLAC"),
@@ -47,8 +38,7 @@ struct Ui {
     carpeta: gtk::Entry,
     sal_audio: gtk::CheckButton,
     sal_video: gtk::CheckButton,
-    marco_audio: gtk::Frame,
-    plataformas: Vec<gtk::CheckButton>,
+    ajustar: gtk::CheckButton,
     formato: gtk::DropDown,
     forzar: gtk::CheckButton,
     marco_video: gtk::Frame,
@@ -143,9 +133,6 @@ impl Ui {
         if !Path::new(&cancion).is_file() {
             return Some("No se encuentra el archivo de la canción.");
         }
-        if self.con_audio() && !self.plataformas.iter().any(|p| p.is_active()) {
-            return Some("Marca al menos una plataforma.");
-        }
         None
     }
 
@@ -162,9 +149,6 @@ impl Ui {
         };
         par("--salida", salida.into());
         if self.con_audio() {
-            let elegidas: Vec<&str> =
-                PLATAFORMAS.iter().zip(&self.plataformas).filter(|(_, c)| c.is_active()).map(|(p, _)| p.0).collect();
-            par("--plataforma", elegidas.join(","));
             par("--formato", FORMATOS[(self.formato.selected() as usize).min(FORMATOS.len() - 1)].0.into());
         }
         if self.con_video() {
@@ -183,7 +167,9 @@ impl Ui {
                 par(opcion, texto(entrada));
             }
         }
-        if self.forzar.is_active() && self.con_audio() {
+        if !self.ajustar.is_active() {
+            a.push("--sin-ajuste".into());
+        } else if self.forzar.is_active() {
             a.push("--forzar-nivel".into());
         }
         a
@@ -213,7 +199,8 @@ impl Ui {
 
     /// Muestra u oculta las secciones según lo que se haya pedido.
     fn ajustar_secciones(&self) {
-        self.marco_audio.set_visible(self.con_audio());
+        self.formato.set_sensitive(self.con_audio());
+        self.forzar.set_sensitive(self.ajustar.is_active());
         self.marco_video.set_visible(self.con_video());
         self.chasis.set_sensitive(!self.dis_ondas.is_active());
     }
@@ -359,27 +346,17 @@ fn construir(app: &gtk::Application) {
     fila(&general, 4, "Guardar en", &caja_carpeta);
 
     // ── Audio ──
-    let caja_plataformas = gtk::FlowBox::builder()
-        .selection_mode(gtk::SelectionMode::None)
-        .max_children_per_line(4)
-        .min_children_per_line(2)
-        .hexpand(true)
-        .build();
-    let mut plataformas = Vec::new();
-    for (i, (_, nombre)) in PLATAFORMAS.iter().enumerate() {
-        let c = gtk::CheckButton::with_label(nombre);
-        c.set_active(i == 0);
-        caja_plataformas.insert(&c, -1);
-        plataformas.push(c);
-    }
+    let ajustar = gtk::CheckButton::with_label("Ajustar el volumen para Spotify (−14 LUFS, pico −1 dB)");
+    ajustar.set_active(true);
+    let forzar = gtk::CheckButton::with_label("Llegar siempre a ese nivel, aunque haya que comprimir");
+    forzar.set_margin_start(24);
     let nombres: Vec<&str> = FORMATOS.iter().map(|f| f.1).collect();
     let formato = gtk::DropDown::from_strings(&nombres);
     formato.set_halign(gtk::Align::Start);
-    let forzar = gtk::CheckButton::with_label("Llegar siempre al nivel de la plataforma, aunque haya que comprimir");
     let audio = rejilla();
-    fila(&audio, 0, "Plataformas", &caja_plataformas);
-    fila(&audio, 1, "Formato", &formato);
-    audio.attach(&forzar, 0, 2, 2, 1);
+    audio.attach(&ajustar, 0, 0, 2, 1);
+    audio.attach(&forzar, 0, 1, 2, 1);
+    fila(&audio, 2, "Formato del archivo", &formato);
     let marco_audio = gtk::Frame::new(Some("Audio"));
     marco_audio.set_child(Some(&audio));
 
@@ -475,8 +452,7 @@ fn construir(app: &gtk::Application) {
         carpeta,
         sal_audio,
         sal_video,
-        marco_audio,
-        plataformas,
+        ajustar,
         formato,
         forzar,
         marco_video,
@@ -495,7 +471,7 @@ fn construir(app: &gtk::Application) {
     });
 
     // ── Comportamiento ──
-    for boton in [&ui.sal_audio, &ui.sal_video, &sal_ambos, &ui.dis_ondas] {
+    for boton in [&ui.sal_audio, &ui.sal_video, &sal_ambos, &ui.dis_ondas, &ui.ajustar] {
         let ui = ui.clone();
         boton.connect_toggled(move |_| ui.ajustar_secciones());
     }

@@ -7,15 +7,6 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::{Duration, Instant};
 
-const PLATAFORMAS: [(&str, &str); 7] = [
-    ("spotify", "Spotify"),
-    ("youtube", "YouTube"),
-    ("apple", "Apple Music"),
-    ("tidal", "Tidal"),
-    ("amazon", "Amazon Music"),
-    ("deezer", "Deezer"),
-    ("soundcloud", "SoundCloud"),
-];
 const FORMATOS: [&str; 4] = ["wav", "flac", "mp3", "m4a"];
 const EXT_AUDIO: [&str; 8] = ["wav", "mp3", "flac", "m4a", "ogg", "aiff", "aif", "opus"];
 const EXT_IMAGEN: [&str; 5] = ["jpg", "jpeg", "png", "webp", "bmp"];
@@ -42,7 +33,7 @@ enum Aviso {
 struct App {
     cancion: String,
     salida: Salida,
-    plataformas: [bool; 7],
+    ajustar: bool,
     formato: usize,
     forzar: bool,
     titulo: String,
@@ -66,7 +57,7 @@ impl Default for App {
         App {
             cancion: String::new(),
             salida: Salida::Ambos,
-            plataformas: [true, false, false, false, false, false, false],
+            ajustar: true,
             formato: 0,
             forzar: false,
             titulo: String::new(),
@@ -190,9 +181,6 @@ impl App {
             .into(),
         );
         if self.salida != Salida::Video {
-            let elegidas: Vec<&str> =
-                PLATAFORMAS.iter().zip(self.plataformas).filter(|(_, si)| *si).map(|(p, _)| p.0).collect();
-            par("--plataforma", elegidas.join(","));
             par("--formato", FORMATOS[self.formato].into());
         }
         if self.salida != Salida::Audio {
@@ -213,7 +201,9 @@ impl App {
         if !self.carpeta.trim().is_empty() {
             par("--dir", self.carpeta.trim().into());
         }
-        if self.forzar {
+        if !self.ajustar {
+            a.push("--sin-ajuste".into());
+        } else if self.forzar {
             a.push("--forzar-nivel".into());
         }
         a
@@ -226,9 +216,6 @@ impl App {
         }
         if !Path::new(self.cancion.trim()).is_file() {
             return Some("No se encuentra el archivo de la canción.");
-        }
-        if self.salida != Salida::Video && !self.plataformas.iter().any(|p| *p) {
-            return Some("Marca al menos una plataforma.");
         }
         None
     }
@@ -393,23 +380,22 @@ impl eframe::App for App {
                         self.fila_archivo(ui, "Guardar en", Campo::Carpeta, "Vacío: junto a la canción");
                     });
 
+                    ui.add_space(10.0);
+                    ui.separator();
+                    ui.strong("Audio");
+                    ui.add_space(4.0);
+                    ui.checkbox(&mut self.ajustar, "Ajustar el volumen para Spotify (−14 LUFS, pico −1 dB)");
+                    ui.add_enabled(
+                        self.ajustar,
+                        egui::Checkbox::new(&mut self.forzar, "Llegar siempre a ese nivel, aunque haya que comprimir"),
+                    );
                     if self.salida != Salida::Video {
-                        ui.add_space(10.0);
-                        ui.separator();
-                        ui.strong("Audio");
-                        ui.add_space(4.0);
-                        ui.horizontal_wrapped(|ui| {
-                            for (i, (_, nombre)) in PLATAFORMAS.iter().enumerate() {
-                                ui.checkbox(&mut self.plataformas[i], *nombre);
-                            }
-                        });
                         ui.horizontal(|ui| {
-                            ui.label("Formato");
+                            ui.label("Formato del archivo");
                             for (i, f) in FORMATOS.iter().enumerate() {
                                 ui.radio_value(&mut self.formato, i, f.to_uppercase());
                             }
                         });
-                        ui.checkbox(&mut self.forzar, "Llegar siempre al nivel de la plataforma, aunque haya que comprimir");
                     }
 
                     if self.salida != Salida::Audio {

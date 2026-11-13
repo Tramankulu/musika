@@ -21,7 +21,7 @@ Hace falta [FFmpeg](https://ffmpeg.org) (musika lo usa para el audio y el vídeo
 En Ubuntu (22.04 o posterior), el `.deb` se instala así y trae FFmpeg como dependencia:
 
 ```
-sudo apt install ./musika_0.7.0_amd64.deb
+sudo apt install ./musika_0.8.0_amd64.deb
 ```
 
 **Compilar a mano** (con [Rust](https://rustup.rs) instalado):
@@ -60,6 +60,7 @@ musika <canción> [opciones]
 | `--caratula` | Imagen para la etiqueta del disco y el fondo | etiqueta con el título |
 | `--color` | Color `RRGGBB` de la etiqueta y del fondo | `D9482B` |
 | `--lufs`, `--pico` | Nivel a medida (LUFS y dBTP) | — |
+| `--sin-ajuste` | No toca el volumen: deja el audio como en el original | ajusta |
 | `--forzar-nivel` | Llega siempre al nivel pedido aunque haya que comprimir | ganancia fija |
 | `--diseno` | Diseño del vídeo: `tocadiscos` u `ondas` | `tocadiscos` |
 | `--fondo` | En el diseño tocadiscos: `tocadiscos` (chasis de aluminio) o `liso` | `tocadiscos` |
@@ -80,6 +81,8 @@ musika cancion.wav -s video --diseno ondas --color 2B7BD9
 Los archivos se llaman `<canción>_<plataforma>.<formato>` y `<canción>_video.mp4`.
 
 ## Qué hace con el audio
+
+En la ventana el ajuste es siempre el de Spotify (−14 LUFS, pico −1 dBTP), que es también el nivel de YouTube, y se puede desactivar con una casilla para dejar el audio tal como está en el original. Desde la terminal eso mismo es `--sin-ajuste`; el resto de plataformas siguen disponibles con `-p`.
 
 Mide la canción según el estándar ITU-R BS.1770 (sonoridad integrada en LUFS y pico real en dBTP) y le aplica **una ganancia fija**: sube o baja toda la canción por igual, sin tocar la mezcla ni la dinámica, hasta el nivel de la plataforma.
 
@@ -134,7 +137,7 @@ Los textos usan la tipografía más moderna que encuentre en el sistema (Inter, 
 
 ### Pensado para YouTube
 
-El vídeo sale con los [ajustes de subida que recomienda YouTube](https://support.google.com/youtube/answer/1722171) y su audio lleva siempre el nivel de YouTube (−14 LUFS, −1 dBTP), sea cual sea la plataforma elegida con `-p` para los archivos de audio:
+El vídeo sale con los [ajustes de subida que recomienda YouTube](https://support.google.com/youtube/answer/1722171) y su audio lleva el nivel de Spotify (−14 LUFS, −1 dBTP, el mismo que usa YouTube), salvo que se pida `--sin-ajuste`:
 
 - MP4 con el índice al principio (*fast start*) y sin listas de edición.
 - Vídeo H.264 perfil High, progresivo, 30 fps, 2 fotogramas B, GOP cerrado de medio segundo, 4:2:0 y color BT.709.

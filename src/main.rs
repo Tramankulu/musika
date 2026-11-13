@@ -67,6 +67,7 @@ struct Opciones {
     rpm: f64,
     fondo: String,
     diseno: String,
+    sin_ajuste: bool,
 }
 
 const AYUDA: &str = "\
@@ -89,6 +90,7 @@ OPCIONES:
         --color <RRGGBB>        Color de la etiqueta y del fondo  [por defecto: D9482B]
         --lufs <n>              Sonoridad a medida, p. ej. -14 (crea la salida «personalizado»)
         --pico <n>              Pico real máximo a medida en dBTP, p. ej. -1
+        --sin-ajuste            No toca el volumen: deja el audio como está en el original
         --forzar-nivel          Llega siempre al nivel pedido aunque haya que comprimir
                                 (por defecto solo se aplica una ganancia fija)
         --diseno <tipo>         Diseño del vídeo:                        [por defecto: tocadiscos]
@@ -142,6 +144,7 @@ fn opciones_por_defecto(entrada: PathBuf) -> Opciones {
         rpm: 8.0,
         fondo: "tocadiscos".into(),
         diseno: "tocadiscos".into(),
+        sin_ajuste: false,
     }
 }
 
@@ -196,6 +199,7 @@ fn parsear_args(args: &[String]) -> Res<Option<Opciones>> {
             "--pico" => o.pico = Some(numero(&valor()?, "--pico")?),
             "--fuente" => o.fuente = Some(PathBuf::from(valor()?)),
             "--forzar-nivel" => o.forzar = true,
+            "--sin-ajuste" => o.sin_ajuste = true,
             "--rpm" => o.rpm = numero(&valor()?, "--rpm")?,
             "--fondo" => o.fondo = valor()?.to_lowercase(),
             "--diseno" | "--diseño" => o.diseno = valor()?.to_lowercase(),
@@ -423,6 +427,8 @@ enum Modo {
     Limitada,
     /// Ganancia variable (compresión) para llegar al nivel a toda costa.
     Dinamica,
+    /// Sin tocar el volumen.
+    SinAjuste,
 }
 
 struct Resultado {
@@ -456,7 +462,22 @@ struct Destino<'a> {
 /// dinámica, hasta el nivel de la plataforma o hasta donde deje el pico
 /// máximo (es lo mismo que hacen las plataformas al reproducir). Solo con
 /// `forzar` se recurre a la ganancia variable de loudnorm.
-fn ajustar(ff: &Ff, tmp: &Path, entrada: &Path, ob: &Objetivo, m: &Medida, d: &Destino, forzar: bool) -> Res<Resultado> {
+fn ajustar(ff: &Ff, tmp: &Path, entrada: &Path, ob: Option<&Objetivo>, m: &Medida, d: &Destino, forzar: bool) -> Res<Resultado> {
+    // Sin objetivo no se toca el volumen: solo se cambia de formato si hace falta.
+    let Some(ob) = ob else {
+        let mut args = vec!["-i".to_string(), ruta(entrada)];
+        args.extend(["-map", "0:a:0", "-vn", "-map_metadata", "0"].map(String::from));
+        if let Some(f) = d.frecuencia {
+            args.extend(["-ar".to_string(), f.to_string()]);
+        }
+        for (k, v) in d.etiquetas {
+            args.extend(["-metadata".to_string(), format!("{k}={v}")]);
+        }
+        args.extend(codec_audio(d.formato)?.into_iter().map(String::from));
+        args.push(ruta(d.archivo));
+        ffmpeg(ff, tmp, &args)?;
+        return Ok(Resultado { lufs: m.i, pico: m.tp, ganancia: None, modo: Modo::SinAjuste });
+    };
     let necesaria = ob.lufs - m.i;
     let maxima = ob.pico - m.tp;
     let dinamica = forzar && necesaria > maxima;
@@ -955,8 +976,9 @@ fn ejecutar(o: Opciones) -> Res<()> {
     let m = medir(&ff, &tmp.0, &entrada, -14.0, -1.0)?;
     println!("  Original: {:.1} LUFS, pico {:.1} dBTP, rango {:.1} LU\n", m.i, m.tp, m.lra);
 
-    let informe = |ob: &Objetivo, r: &Resultado, destino: &Path| {
+    let informe = |nombre: &str, r: &Resultado, destino: &Path| {
         let detalle = match (&r.modo, r.ganancia) {
+            (Modo::SinAjuste, _) => "sin ajustar".to_string(),
             (Modo::Dinamica, _) => "ajuste dinámico".to_string(),
             (Modo::Limitada, Some(g)) => format!("{g:+.1} dB, al límite del pico"),
             (_, Some(g)) => format!("{g:+.1} dB"),
@@ -964,7 +986,7 @@ fn ejecutar(o: Opciones) -> Res<()> {
         };
         println!(
             "  ✔ {:<13} {:.1} LUFS, pico {:.1} dBTP ({detalle})  →  {}",
-            ob.nombre,
+            nombre,
             r.lufs,
             r.pico,
             destino.display()
@@ -978,22 +1000,30 @@ fn ejecutar(o: Opciones) -> Res<()> {
     };
     if o.salida != Salida::Video {
         println!("Preparando el audio:");
-        for ob in &lista {
-            let archivo = dir.join(format!("{base}_{}.{}", ob.id, o.formato));
+        // Sin ajuste sale un solo archivo; con ajuste, uno por plataforma.
+        let salidas: Vec<(String, &str, Option<&Objetivo>)> = if o.sin_ajuste {
+            vec![("sin_ajuste".into(), "Sin ajuste", None)]
+        } else {
+            lista.iter().map(|ob| (ob.id.clone(), ob.nombre.as_str(), Some(ob))).collect()
+        };
+        for (id, nombre, ob) in salidas {
+            let archivo = dir.join(format!("{base}_{id}.{}", o.formato));
             if archivo == entrada {
                 return Err("El archivo de salida coincidiría con el original; elige otra carpeta con --dir.".into());
             }
             let d = Destino { archivo: &archivo, formato: &o.formato, frecuencia, etiquetas: &etiquetas };
             let r = ajustar(&ff, &tmp.0, &entrada, ob, &m, &d, o.forzar)?;
             anotar(&r);
-            informe(ob, &r, &archivo);
+            informe(nombre, &r, &archivo);
         }
     }
 
     if o.salida != Salida::Audio {
-        // El vídeo es para YouTube: su audio lleva siempre el ajuste de YouTube.
-        let yt = PLATAFORMAS.iter().find(|p| p.id == "youtube").expect("YouTube está en la lista");
-        let ob = &Objetivo { id: yt.id.into(), nombre: yt.nombre.into(), lufs: yt.lufs, pico: yt.pico };
+        // El audio del vídeo lleva el ajuste de Spotify (−14 LUFS, −1 dBTP, los
+        // mismos valores que usa YouTube), salvo que se haya pedido no ajustar.
+        let sp = PLATAFORMAS.iter().find(|p| p.id == "spotify").expect("Spotify está en la lista");
+        let spotify = Objetivo { id: sp.id.into(), nombre: sp.nombre.into(), lufs: sp.lufs, pico: sp.pico };
+        let ob = if o.sin_ajuste { None } else { Some(&spotify) };
         println!("Preparando el vídeo para YouTube:");
         let master = tmp.0.join("master.wav");
         let d = Destino { archivo: &master, formato: "wav", frecuencia: Some(48000), etiquetas: &[] };
@@ -1003,7 +1033,7 @@ fn ejecutar(o: Opciones) -> Res<()> {
         println!("  Dibujando el disco y codificando; puede tardar unos minutos…");
         let v = Video { audio: &master, destino: &destino, titulo: &titulo, artista: &artista, duracion: info.duracion };
         crear_video(&ff, &tmp.0, &o, &v)?;
-        informe(ob, &r, &destino);
+        informe(if o.sin_ajuste { "Sin ajuste" } else { "Spotify" }, &r, &destino);
     }
 
     if limitada {
