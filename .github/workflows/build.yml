@@ -34,7 +34,36 @@ jobs:
         run: cargo build --release --manifest-path gui/Cargo.toml
       - name: Crear el .deb (Ubuntu)
         if: runner.os == 'Linux'
-        run: sh empaquetado/deb.sh
+        run: |
+          sh empaquetado/deb.sh
+          dpkg-deb -c musika_*.deb
+          dpkg-deb -f musika_*.deb Depends
+      # Arranca la ventana en una pantalla virtual: tiene que seguir abierta a
+      # los 10 segundos y haber dibujado algo.
+      - name: Probar que la ventana arranca (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y xvfb libgl1-mesa-dri imagemagick
+          sudo apt-get install -y ./musika_*.deb
+          export LIBGL_ALWAYS_SOFTWARE=1
+          Xvfb :99 -screen 0 1280x900x24 &
+          sleep 2
+          export DISPLAY=:99
+          musika-gui > ventana.log 2>&1 &
+          pid=$!
+          sleep 10
+          cat ventana.log
+          kill -0 $pid
+          import -window root captura-ventana.png
+          colores=$(identify -format "%k" captura-ventana.png)
+          echo "Colores distintos en la captura: $colores"
+          test "$colores" -gt 50
+          kill $pid
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: captura-ventana
+          path: captura-ventana.png
       - name: Empaquetar (Windows)
         if: runner.os == 'Windows'
         run: Compress-Archive -Path target/release/musika.exe, gui/target/release/musika-gui.exe -DestinationPath ${{ matrix.name }}.zip
