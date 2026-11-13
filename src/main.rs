@@ -65,6 +65,7 @@ struct Opciones {
     pico: Option<f64>,
     fuente: Option<PathBuf>,
     forzar: bool,
+    rpm: f64,
 }
 
 const AYUDA: &str = "\
@@ -90,6 +91,7 @@ OPCIONES:
         --pico <n>              Pico real máximo a medida en dBTP, p. ej. -1
         --forzar-nivel          Llega siempre al nivel pedido aunque haya que comprimir
                                 (por defecto solo se aplica una ganancia fija)
+        --rpm <n>               Vueltas por minuto del disco en el vídeo    [por defecto: 8]
         --fuente <archivo.ttf>  Tipografía para los textos del vídeo
     -l, --listar                Muestra los niveles de cada plataforma
     -h, --ayuda                 Muestra esta ayuda
@@ -133,6 +135,7 @@ fn opciones_por_defecto(entrada: PathBuf) -> Opciones {
         pico: None,
         fuente: None,
         forzar: false,
+        rpm: 8.0,
     }
 }
 
@@ -181,6 +184,7 @@ fn parsear_args(args: &[String]) -> Res<Option<Opciones>> {
             "--pico" => o.pico = Some(numero(&valor()?, "--pico")?),
             "--fuente" => o.fuente = Some(PathBuf::from(valor()?)),
             "--forzar-nivel" => o.forzar = true,
+            "--rpm" => o.rpm = numero(&valor()?, "--rpm")?,
             _ if a.starts_with('-') && a.len() > 1 => {
                 return Err(format!("Opción desconocida: {a}\nUsa --ayuda para ver las opciones."))
             }
@@ -490,68 +494,80 @@ struct Diseno {
     disco: usize,
     disco_x: usize,
     disco_y: usize,
-    texto_cx: usize,
-    texto_ancho: usize,
+    panel: (usize, usize, usize, usize), // x, y, ancho, alto
+    /// Zona útil dentro del panel: x y ancho.
+    contenido: (usize, usize),
+    centrado: bool,
     titulo_y: usize,
     titulo_max: f64,
-    ondas: (usize, usize, usize, usize), // x, y, ancho, alto
-    barra: (usize, usize, usize),        // x, y, ancho
+    ondas: (usize, usize), // y, alto
+    barra_y: usize,
 }
 
 fn diseno(formato: &str) -> Res<Diseno> {
     Ok(match formato {
         "horizontal" => Diseno {
-            ancho: 1920, alto: 1080, disco: 820, disco_x: 110, disco_y: 130,
-            texto_cx: 1450, texto_ancho: 720, titulo_y: 370, titulo_max: 80.0,
-            ondas: (1090, 590, 720, 130), barra: (1090, 770, 720),
+            ancho: 1920, alto: 1080, disco: 820, disco_x: 90, disco_y: 130,
+            panel: (1070, 290, 780, 560), contenido: (1126, 668), centrado: false,
+            titulo_y: 352, titulo_max: 72.0, ondas: (560, 120), barra_y: 734,
         },
         "vertical" => Diseno {
-            ancho: 1080, alto: 1920, disco: 800, disco_x: 110, disco_y: 230,
-            texto_cx: 540, texto_ancho: 920, titulo_y: 1180, titulo_max: 80.0,
-            ondas: (80, 1420, 920, 160), barra: (80, 1640, 920),
+            ancho: 1080, alto: 1920, disco: 800, disco_x: 110, disco_y: 200,
+            panel: (60, 1120, 960, 640), contenido: (116, 848), centrado: true,
+            titulo_y: 1186, titulo_max: 76.0, ondas: (1400, 150), barra_y: 1624,
         },
         "cuadrado" => Diseno {
-            ancho: 1080, alto: 1080, disco: 600, disco_x: 200, disco_y: 50,
-            texto_cx: 540, texto_ancho: 900, titulo_y: 700, titulo_max: 60.0,
-            ondas: (140, 850, 800, 90), barra: (140, 975, 800),
+            ancho: 1080, alto: 1080, disco: 580, disco_x: 210, disco_y: 40,
+            panel: (110, 660, 860, 390), contenido: (160, 760), centrado: true,
+            titulo_y: 696, titulo_max: 56.0, ondas: (838, 86), barra_y: 956,
         },
         _ => return Err(format!("Formato de vídeo no válido «{formato}»: usa horizontal, vertical o cuadrado")),
     })
 }
 
-fn buscar_fuente(indicada: Option<&Path>) -> Res<Option<PathBuf>> {
+/// Busca una tipografía del sistema: (negrita para el título, normal para el resto).
+fn buscar_fuentes(indicada: Option<&Path>) -> Res<Option<(PathBuf, PathBuf)>> {
     if let Some(f) = indicada {
-        return if f.is_file() { Ok(Some(f.to_path_buf())) } else { Err(format!("No existe la fuente {}", f.display())) };
+        return if f.is_file() {
+            Ok(Some((f.to_path_buf(), f.to_path_buf())))
+        } else {
+            Err(format!("No existe la fuente {}", f.display()))
+        };
     }
-    let mut candidatos: Vec<PathBuf> = Vec::new();
-    if cfg!(windows) {
-        let win = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".into());
-        for f in ["segoeuib.ttf", "arialbd.ttf", "arial.ttf", "tahoma.ttf"] {
-            candidatos.push(Path::new(&win).join("Fonts").join(f));
-        }
+    // De más moderna a más corriente.
+    let pares: &[(&str, &str, &str)] = if cfg!(windows) {
+        &[("", "segoeuib.ttf", "segoeui.ttf"), ("", "arialbd.ttf", "arial.ttf"), ("", "tahomabd.ttf", "tahoma.ttf")]
     } else {
-        candidatos.extend(
-            [
-                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-                "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-                "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
-                "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
-                "/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf",
-                "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
-                "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-                "/Library/Fonts/Arial Bold.ttf",
-            ]
-            .map(PathBuf::from),
-        );
-    }
-    if let Some(f) = candidatos.into_iter().find(|c| c.is_file()) {
-        return Ok(Some(f));
+        &[
+            ("/usr/share/fonts/opentype/inter/", "Inter-Bold.otf", "Inter-Regular.otf"),
+            ("/usr/share/fonts/truetype/inter/", "Inter-Bold.ttf", "Inter-Regular.ttf"),
+            ("/usr/share/fonts/truetype/google-fonts/", "Poppins-Bold.ttf", "Poppins-Regular.ttf"),
+            ("/usr/share/fonts/truetype/ubuntu/", "Ubuntu-B.ttf", "Ubuntu-R.ttf"),
+            ("/usr/share/fonts/truetype/noto/", "NotoSans-Bold.ttf", "NotoSans-Regular.ttf"),
+            ("/usr/share/fonts/truetype/liberation/", "LiberationSans-Bold.ttf", "LiberationSans-Regular.ttf"),
+            ("/usr/share/fonts/truetype/liberation2/", "LiberationSans-Bold.ttf", "LiberationSans-Regular.ttf"),
+            ("/usr/share/fonts/truetype/dejavu/", "DejaVuSans-Bold.ttf", "DejaVuSans.ttf"),
+            ("/System/Library/Fonts/Supplemental/", "Arial Bold.ttf", "Arial.ttf"),
+        ]
+    };
+    let carpeta_windows = PathBuf::from(std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".into())).join("Fonts");
+    for (carpeta, negrita, normal) in pares {
+        let carpeta = if cfg!(windows) { carpeta_windows.clone() } else { PathBuf::from(carpeta) };
+        let (n, r) = (carpeta.join(negrita), carpeta.join(normal));
+        if n.is_file() {
+            let r = if r.is_file() { r } else { n.clone() };
+            return Ok(Some((n, r)));
+        }
     }
     // Último recurso en Linux: preguntar a fontconfig.
-    let fc = Command::new("fc-match").args(["-f", "%{file}", "sans:bold"]).output().ok();
-    Ok(fc
-        .map(|r| PathBuf::from(String::from_utf8_lossy(&r.stdout).trim().to_string()))
-        .filter(|p| p.is_file()))
+    let fc = |patron: &str| {
+        let r = Command::new("fc-match").args(["-f", "%{file}", patron]).output().ok()?;
+        Some(PathBuf::from(String::from_utf8_lossy(&r.stdout).trim().to_string())).filter(|p| p.is_file())
+    };
+    Ok(fc("sans:bold").map(|n| {
+        let r = fc("sans").unwrap_or_else(|| n.clone());
+        (n, r)
+    }))
 }
 
 fn recortar(texto: &str, max: usize) -> String {
@@ -566,7 +582,7 @@ fn recortar(texto: &str, max: usize) -> String {
 
 /// Tamaño de letra para que `n` caracteres quepan en `ancho` píxeles.
 fn cuerpo(ancho: usize, n: usize, min: f64, max: f64) -> u32 {
-    (ancho as f64 / (0.6 * n.max(1) as f64)).clamp(min.min(max), max) as u32
+    (ancho as f64 / (0.62 * n.max(1) as f64)).clamp(min.min(max), max) as u32
 }
 
 struct Video<'a> {
@@ -596,32 +612,48 @@ fn crear_video(ff: &Ff, tmp: &Path, o: &Opciones, v: &Video) -> Res<()> {
         Some(c) => Some(ruta(&absoluta(c)?)),
         None => None,
     };
+    // Color de acento: el de la etiqueta, aclarado para que destaque sobre el fondo.
+    let claro = |c: u8| (c as f64 + (255.0 - c as f64) * 0.45) as u8;
+    let acento = [claro(o.color.0), claro(o.color.1), claro(o.color.2)];
+    let acento_hex = format!("0x{:02X}{:02X}{:02X}", acento[0], acento[1], acento[2]);
 
-    // Imágenes base: disco, fondo con el plato y brazo.
+    // Imágenes base: disco, fondo (con plato y panel), brazo y piezas del visualizador.
     let centro = (d.disco_x as f64 + lado as f64 / 2.0, d.disco_y as f64 + lado as f64 / 2.0, lado as f64 / 2.0);
+    let panel = (d.panel.0 as f64, d.panel.1 as f64, d.panel.2 as f64, d.panel.3 as f64);
     png("disco.png", lado, lado, &imagen::dibujar_disco(lado, o.color))?;
-    png("fondo.png", d.ancho, d.alto, &imagen::dibujar_fondo(d.ancho, d.alto, o.color, centro, caratula.is_some()))?;
+    let fondo = imagen::dibujar_fondo(d.ancho, d.alto, o.color, centro, caratula.is_some(), panel);
+    png("fondo.png", d.ancho, d.alto, &fondo)?;
     let (bx, by, bw, bh, brazo) = imagen::dibujar_brazo((d.ancho, d.alto), centro, o.color);
     png("brazo.png", bw, bh, &brazo)?;
+    let (cx, cw) = d.contenido;
+    let (oy, oh) = d.ondas;
+    const PASO: usize = 12; // cada barra del visualizador: 6 px de barra y 6 de hueco
+    let barras = cw / PASO;
+    png("barras.png", barras * PASO, oh, &imagen::dibujar_barras(barras * PASO, oh, PASO / 2, PASO))?;
+    const PUNTO: usize = 18;
+    png("punto.png", PUNTO, PUNTO, &imagen::dibujar_punto(PUNTO, acento))?;
 
-    // Tipografía: se copia a la carpeta temporal para referirla por nombre y
-    // no tener que escapar rutas (las de Windows llevan «:»).
-    let fuente = match buscar_fuente(o.fuente.as_deref())? {
-        Some(f) => {
-            std::fs::copy(&f, tmp.join("fuente.ttf")).map_err(|e| format!("No se pudo leer la fuente {}: {e}", f.display()))?;
-            "fontfile=fuente.ttf:"
+    // Tipografías: se copian a la carpeta temporal para referirlas por nombre
+    // y no tener que escapar rutas (las de Windows llevan «:»).
+    let (negrita, normal) = match buscar_fuentes(o.fuente.as_deref())? {
+        Some((n, r)) => {
+            for (origen, copia) in [(&n, "negrita.ttf"), (&r, "normal.ttf")] {
+                std::fs::copy(origen, tmp.join(copia))
+                    .map_err(|e| format!("No se pudo leer la fuente {}: {e}", origen.display()))?;
+            }
+            ("fontfile=negrita.ttf:", "fontfile=normal.ttf:")
         }
-        None => "",
+        None => ("", ""),
     };
     // Los textos van en archivos para no tener que escapar nada.
     let texto = |archivo: &str, contenido: &str, estilo: &str, cuerpo: u32, x: &str, y: &str| -> Res<String> {
         escribir(archivo, contenido.as_bytes())?;
-        Ok(format!("drawtext={fuente}textfile={archivo}:{estilo}:fontsize={cuerpo}:x={x}:y={y}"))
+        Ok(format!("drawtext=textfile={archivo}:{estilo}:fontsize={cuerpo}:x={x}:y={y}"))
     };
-    let sombra = "shadowcolor=black@0.55:shadowx=0:shadowy=3";
+    let sombra = "shadowcolor=black@0.45:shadowx=0:shadowy=2";
 
     // Etiqueta central y fondo: con carátula, la carátula recortada en círculo
-    // sobre el disco y desenfocada de fondo; sin ella, textos y degradado.
+    // sobre el disco y desenfocada de fondo; sin ella, textos y manchas de color.
     let etiqueta = (lado as f64 * imagen::R_ETIQUETA * 0.9) as usize / 2 * 2;
     let (mut disco_listo, mut fondo_listo) = ("disco.png", "fondo.png");
     let mut filtro_disco = String::from("format=rgba");
@@ -640,10 +672,10 @@ fn crear_video(ff: &Ff, tmp: &Path, o: &Opciones, v: &Video) -> Res<()> {
 
         let grafo = format!(
             "[1:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},gblur=sigma={s},\
-             eq=saturation=1.2,format=rgba[c];[c][0:v]overlay=format=auto",
+             eq=saturation=1.25,format=rgba[c];[c][0:v]overlay=format=auto",
             w = d.ancho,
             h = d.alto,
-            s = d.ancho.max(d.alto) / 40
+            s = d.ancho.max(d.alto) / 32
         );
         let mut args: Vec<String> = ["-i", "fondo.png", "-i", caratula].map(String::from).to_vec();
         args.extend(["-filter_complex", &grafo, "-frames:v", "1", "-update", "1", "fondo2.png"].map(String::from));
@@ -651,74 +683,75 @@ fn crear_video(ff: &Ff, tmp: &Path, o: &Opciones, v: &Video) -> Res<()> {
         fondo_listo = "fondo2.png";
     } else {
         let lum = 0.299 * o.color.0 as f64 + 0.587 * o.color.1 as f64 + 0.114 * o.color.2 as f64;
-        let tinta = if lum > 150.0 { "expansion=none:fontcolor=0x141414" } else { "expansion=none:fontcolor=white" };
+        let tinta = if lum > 150.0 { "0x141414" } else { "white" };
         let t = recortar(v.titulo, 22);
         let ct = cuerpo(etiqueta * 4 / 5, t.chars().count(), 12.0, lado as f64 * 0.040);
         let y = format!("h/2-{}-text_h/2", lado as f64 * 0.085);
-        filtro_disco += &format!(",{}", texto("e_titulo.txt", &t, tinta, ct, "(w-text_w)/2", &y)?);
+        let estilo = format!("{negrita}expansion=none:fontcolor={tinta}");
+        filtro_disco += &format!(",{}", texto("e_titulo.txt", &t, &estilo, ct, "(w-text_w)/2", &y)?);
         if !v.artista.is_empty() {
             let a = recortar(v.artista, 26);
             let ca = cuerpo(etiqueta * 4 / 5, a.chars().count(), 10.0, lado as f64 * 0.028);
             let y = format!("h/2+{}-text_h/2", lado as f64 * 0.085);
-            filtro_disco += &format!(",{}", texto("e_artista.txt", &a, tinta, ca, "(w-text_w)/2", &y)?);
+            let estilo = format!("{normal}expansion=none:fontcolor={tinta}");
+            filtro_disco += &format!(",{}", texto("e_artista.txt", &a, &estilo, ca, "(w-text_w)/2", &y)?);
         }
     }
 
-    // Color de acento: el de la etiqueta, aclarado para que destaque sobre el fondo.
-    let claro = |c: u8| (c as f64 + (255.0 - c as f64) * 0.45) as u8;
-    let acento = format!("0x{:02X}{:02X}{:02X}", claro(o.color.0), claro(o.color.1), claro(o.color.2));
-
-    // Textos principales.
-    let titulo = recortar(v.titulo, 44);
-    let ct = cuerpo(d.texto_ancho, titulo.chars().count(), 34.0, d.titulo_max);
-    let cx = format!("{}-text_w/2", d.texto_cx);
-    let estilo = format!("expansion=none:fontcolor=white:{sombra}");
-    let mut textos = texto("titulo.txt", &titulo, &estilo, ct, &cx, &d.titulo_y.to_string())?;
+    // Título y artista: alineados a la izquierda del panel o centrados en él.
+    let x_texto = if d.centrado { format!("{}-text_w/2", cx + cw / 2) } else { cx.to_string() };
+    let titulo = recortar(v.titulo, 40);
+    let ct = cuerpo(cw, titulo.chars().count(), 34.0, d.titulo_max);
+    let estilo = format!("{negrita}expansion=none:fontcolor=white:{sombra}");
+    let mut textos = texto("titulo.txt", &titulo, &estilo, ct, &x_texto, &d.titulo_y.to_string())?;
     if !v.artista.is_empty() {
-        let artista = recortar(v.artista, 50);
-        let ca = cuerpo(d.texto_ancho, artista.chars().count(), 24.0, ct as f64 * 0.58);
-        let y = d.titulo_y + ct as usize + 30;
-        let estilo = format!("expansion=none:fontcolor={acento}:{sombra}");
-        textos += &format!(",{}", texto("artista.txt", &artista, &estilo, ca, &cx, &y.to_string())?);
+        let artista = recortar(v.artista, 48);
+        let ca = cuerpo(cw, artista.chars().count(), 22.0, ct as f64 * 0.52);
+        let y = d.titulo_y + ct as usize + 26;
+        let estilo = format!("{normal}expansion=none:fontcolor={acento_hex}:{sombra}");
+        textos += &format!(",{}", texto("artista.txt", &artista, &estilo, ca, &x_texto, &y.to_string())?);
     }
 
-    // Barra de progreso con el tiempo transcurrido y el total.
-    let (px, py, pw) = d.barra;
+    // Barra de progreso con tirador, tiempo transcurrido y total.
+    let py = d.barra_y;
     let mut barra = String::from("[b3]null[b4];");
     if let Some(dur) = v.duracion.filter(|t| *t > 1.0) {
         barra = format!(
-            "color=c=white@0.22:s={pw}x6:r=30,format=rgba[pista];color=c={acento}:s={pw}x6:r=30,format=rgba[avance];\
+            "color=c=white@0.20:s={cw}x4:r=30,format=rgba[pista];color=c={acento_hex}:s={cw}x4:r=30,format=rgba[avance];\
              [pista][avance]overlay=x='-w+w*t/{dur:.3}':y=0:format=auto[barra];\
-             [b3][barra]overlay={px}:{py}:format=auto[b4];"
+             [b3][barra]overlay={cx}:{py}:format=auto[b3b];\
+             [b3b][5:v]overlay=x='{cx}+{cw}*t/{dur:.3}-{m}':y={ty}:format=auto[b4];",
+            m = PUNTO / 2,
+            ty = py + 2 - PUNTO / 2
         );
-        let estilo = format!("fontcolor=white@0.75:{sombra}");
-        let y = (py + 22).to_string();
-        // %{{pts…}} lo expande FFmpeg en cada fotograma.
-        textos += &format!(",{}", texto("tiempo.txt", "%{pts:gmtime:0:%M\\:%S}", &estilo, 24, &px.to_string(), &y)?);
+        let estilo = format!("{normal}fontcolor=white@0.7:{sombra}");
+        let y = (py + 24).to_string();
+        // %{pts…} lo expande FFmpeg en cada fotograma.
+        textos += &format!(",{}", texto("tiempo.txt", "%{pts:gmtime:0:%M\\:%S}", &estilo, 22, &cx.to_string(), &y)?);
         let estilo = format!("expansion=none:{estilo}");
-        let x = format!("{}-text_w", px + pw);
-        textos += &format!(",{}", texto("total.txt", &mm_ss(dur), &estilo, 24, &x, &y)?);
+        let x = format!("{}-text_w", cx + cw);
+        textos += &format!(",{}", texto("total.txt", &mm_ss(dur), &estilo, 22, &x, &y)?);
     }
 
-    // 33⅓ rpm = 3,4907 rad/s.
-    let (ox, oy, ow, oh) = d.ondas;
+    // Visualizador: la onda a baja resolución (una columna por barra),
+    // ampliada sin suavizar y recortada con la máscara de franjas.
+    let giro = o.rpm * std::f64::consts::TAU / 60.0;
+    let ancho_barras = barras * PASO;
     let grafo = format!(
-        "[1:v]{filtro_disco},rotate=a=3.4907*t:c=black@0:ow=iw:oh=ih[disco];\
+        "[1:v]{filtro_disco},rotate=a={giro:.5}*t:c=black@0:ow=iw:oh=ih[disco];\
          [2:v][disco]overlay={}:{}:format=auto[b1];\
          [b1][3:v]overlay={bx}:{by}:format=auto[b2];\
-         [0:a]aformat=channel_layouts=mono,showwaves=s={ow}x{oh}:mode=cline:draw=full:rate=30:colors=white,format=rgba,lutrgb=r={or}:g={og}:b={ob},colorchannelmixer=aa=0.8[ondas];\
-         [b2][ondas]overlay={ox}:{oy}:format=auto[b3];\
+         [0:a]aformat=channel_layouts=mono,showwaves=s={barras}x{oh}:mode=cline:draw=full:scale=sqrt:rate=30:colors=white,\
+         format=rgba,scale={ancho_barras}:{oh}:flags=neighbor[onda];\
+         [onda][4:v]blend=all_mode=multiply,format=rgba,lutrgb=r={}:g={}:b={},colorchannelmixer=aa=0.9[ondas];\
+         [b2][ondas]overlay={cx}:{oy}:format=auto[b3];\
          {barra}\
          [b4]{textos},fade=t=in:d=0.8,format=yuv420p[v]",
-        d.disco_x,
-        d.disco_y,
-        or = claro(o.color.0),
-        og = claro(o.color.1),
-        ob = claro(o.color.2)
+        d.disco_x, d.disco_y, acento[0], acento[1], acento[2]
     );
 
     let mut args = vec!["-i".to_string(), ruta(v.audio)];
-    for imagen in [disco_listo, fondo_listo, "brazo.png"] {
+    for imagen in [disco_listo, fondo_listo, "brazo.png", "barras.png", "punto.png"] {
         args.extend(["-loop", "1", "-framerate", "30", "-i", imagen].map(String::from));
     }
     args.extend(["-filter_complex", &grafo, "-map", "[v]", "-map", "0:a:0"].map(String::from));
