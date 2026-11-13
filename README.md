@@ -21,7 +21,7 @@ Hace falta [FFmpeg](https://ffmpeg.org) (musika lo usa para el audio y el vídeo
 En Ubuntu (22.04 o posterior), el `.deb` se instala así y trae FFmpeg como dependencia:
 
 ```
-sudo apt install ./musika_0.3.1_amd64.deb
+sudo apt install ./musika_0.4.0_amd64.deb
 ```
 
 **Compilar a mano** (con [Rust](https://rustup.rs) instalado):
@@ -53,6 +53,7 @@ musika <canción> [opciones]
 | `--video-formato` | `horizontal` (1920×1080), `vertical` (1080×1920) o `cuadrado` (1080×1080) | `horizontal` |
 | `--lufs`, `--pico` | Nivel a medida (LUFS y dBTP) | — |
 | `--forzar-nivel` | Llega siempre al nivel pedido aunque haya que comprimir | ganancia fija |
+| `--fondo` | `tocadiscos` (chasis de aluminio) o `liso` | `tocadiscos` |
 | `--rpm` | Vueltas por minuto del disco en el vídeo | `8` |
 | `--fuente` | Archivo `.ttf` para los textos del vídeo | una del sistema |
 | `-l, --listar` | Muestra los niveles de cada plataforma | |
@@ -101,10 +102,10 @@ musika solo ajusta el nivel: no ecualiza ni comprime (salvo con `--forzar-nivel`
 
 Un tocadiscos visto desde arriba, con un panel de reproductor al lado:
 
-- **El tocadiscos:** el vinilo gira despacio sobre el plato (8 vueltas por minuto; se cambia con `--rpm`, un tocadiscos real va a 33,3) bajo un brazo con su contrapeso, portacápsulas y cápsula.
+- **El tocadiscos:** un chasis de aluminio cepillado con su plato de corona punteada, botones y control de velocidad. El vinilo gira despacio (8 vueltas por minuto; se cambia con `--rpm`, un tocadiscos real va a 33,3) bajo un brazo con contrapeso, portacápsulas y cápsula. Con `--fondo liso` se quita el chasis y queda solo el disco sobre el fondo.
 - **El panel:** una tarjeta translúcida con el título, el artista, un visualizador de barras que sigue la música y la barra de progreso con el tiempo.
 - **Con `--caratula`**, la imagen va en la etiqueta central del disco y, desenfocada, de fondo.
-- **Sin carátula**, la etiqueta lleva el título y el fondo son manchas de luz suaves a partir del color elegido con `--color`.
+- **Sin carátula**, la etiqueta lleva el título y el fondo es un gris oscuro de estudio con un toque del color elegido con `--color`.
 
 Los textos usan la tipografía más moderna que encuentre en el sistema (Inter, Poppins o Ubuntu en Linux; Segoe UI en Windows) o la que indiques con `--fuente`.
 

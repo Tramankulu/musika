@@ -231,17 +231,21 @@ pub fn dibujar_fondo(
     disco: (f64, f64, f64),
     velo: bool,
     panel: (f64, f64, f64, f64),
+    chasis: bool,
 ) -> Vec<u8> {
     let (cx, cy, radio) = disco;
     let (w, h) = (ancho as f64, alto as f64);
     let diag = (w * w + h * h).sqrt();
     let plato = radio * R_PLATO;
     // Manchas de luz: (x, y, radio, intensidad, color).
+    // Con el tocadiscos el fondo es un gris de estudio con solo un toque de color.
+    let k = if chasis { 0.38 } else { 1.0 };
     let manchas = [
-        (cx, cy, diag * 0.55, 0.30, girar_tono(color, 0.0, 1.0)),
-        (w * 0.98, h * 1.02, diag * 0.55, 0.30, girar_tono(color, 50.0, 0.9)),
-        (w * 0.80, -h * 0.10, diag * 0.45, 0.22, girar_tono(color, -70.0, 0.8)),
+        (cx, cy, diag * 0.55, 0.30 * k, girar_tono(color, 0.0, 1.0)),
+        (w * 0.98, h * 1.02, diag * 0.55, 0.30 * k, girar_tono(color, 50.0, 0.9)),
+        (w * 0.80, -h * 0.10, diag * 0.45, 0.22 * k, girar_tono(color, -70.0, 0.8)),
     ];
+    let gris_base = if chasis { 27.0 } else { 10.0 };
     let radio_panel = panel.2.min(panel.3) * 0.07;
     let mut px = vec![0u8; ancho * alto * 4];
     for y in 0..alto {
@@ -253,14 +257,14 @@ pub fn dibujar_fondo(
             let vineta = 1.0 - 0.50 * dc.powf(1.8);
             // Sombra suave y desplazada bajo el plato.
             let ds = ((fx - cx - radio * 0.04).powi(2) + (fy - cy - radio * 0.07).powi(2)).sqrt();
-            let sombra = 1.0 - 0.7 * (1.0 - ((ds - plato) / (radio * 0.16)).clamp(0.0, 1.0)).powi(2);
+            let sombra = if chasis { 1.0 } else { 1.0 - 0.7 * (1.0 - ((ds - plato) / (radio * 0.16)).clamp(0.0, 1.0)).powi(2) };
             let luz = vineta * sombra;
             let ruido = (azar(x as f64 * 0.37 + y as f64 * 91.7) - 0.5) * 2.0;
 
             let mut rgba = if velo {
                 [0.0, 0.0, 0.0, 255.0 * (1.0 - 0.60 * luz)]
             } else {
-                let mut c = [10.0, 10.0, 14.0, 255.0];
+                let mut c = [gris_base, gris_base, gris_base + 4.0, 255.0];
                 for (mx, my, mr, fuerza, tono) in &manchas {
                     let dm = ((fx - mx).powi(2) + (fy - my).powi(2)).sqrt();
                     let f = (1.0 - dm / mr).clamp(0.0, 1.0).powi(2) * fuerza;
@@ -290,14 +294,18 @@ pub fn dibujar_fondo(
                 pintar(&mut rgba, [255.0, 255.0, 255.0], 0.16 * filo);
             }
 
-            // Plato: un aro metálico oscuro que asoma bajo el disco.
-            let cobertura = (plato - d + 0.5).clamp(0.0, 1.0);
-            if cobertura > 0.0 {
-                let aro = ((d / plato - 0.985) / 0.015).clamp(0.0, 1.0);
-                let v = 26.0 + 30.0 * aro * (0.6 + 0.4 * reflejo((fy - cy).atan2(fx - cx)) * 2.0);
-                for (k, c) in rgba.iter_mut().enumerate() {
-                    let destino = if k == 3 { 255.0 } else { v };
-                    *c = mezcla(*c, destino, cobertura);
+            if chasis {
+                pintar_tocadiscos(&mut rgba, (fx, fy), disco);
+            } else {
+                // Plato: un aro metálico oscuro que asoma bajo el disco.
+                let cobertura = (plato - d + 0.5).clamp(0.0, 1.0);
+                if cobertura > 0.0 {
+                    let aro = ((d / plato - 0.985) / 0.015).clamp(0.0, 1.0);
+                    let v = 26.0 + 30.0 * aro * (0.6 + 0.4 * reflejo((fy - cy).atan2(fx - cx)) * 2.0);
+                    for (k, c) in rgba.iter_mut().enumerate() {
+                        let destino = if k == 3 { 255.0 } else { v };
+                        *c = mezcla(*c, destino, cobertura);
+                    }
                 }
             }
             let i = (y * ancho + x) * 4;
@@ -307,6 +315,96 @@ pub fn dibujar_fondo(
         }
     }
     px
+}
+
+/// Distancia con signo a un rectángulo de esquinas redondeadas centrado en `c`.
+fn rect_redondo(p: (f64, f64), c: (f64, f64), medio: (f64, f64), radio: f64) -> f64 {
+    let qx = (p.0 - c.0).abs() - medio.0 + radio;
+    let qy = (p.1 - c.1).abs() - medio.1 + radio;
+    (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - radio
+}
+
+/// Pinta en un píxel el chasis de un tocadiscos de aluminio visto desde
+/// arriba: carcasa cepillada, plato con corona de puntos, botones, hueco
+/// del adaptador y control de velocidad. Es un diseño propio y genérico.
+fn pintar_tocadiscos(rgba: &mut [f64; 4], p: (f64, f64), disco: (f64, f64, f64)) {
+    let (cx, cy, r) = disco;
+    let en = |x: f64, y: f64| (cx + x * r, cy + y * r);
+    let cob = |d: f64| (0.5 - d).clamp(0.0, 1.0);
+    let gris = |g: f64| [g, g, g + 2.0];
+
+    // Carcasa y su sombra sobre la mesa.
+    let (centro, medio) = (en(0.105, -0.04), (1.275 * r, 1.18 * r));
+    let d_carcasa = rect_redondo(p, centro, medio, 0.06 * r);
+    let d_sombra = rect_redondo((p.0 - 0.03 * r, p.1 - 0.05 * r), centro, medio, 0.06 * r);
+    pintar(rgba, [0.0; 3], 0.6 * (1.0 - (d_sombra / (0.14 * r)).clamp(0.0, 1.0)).powi(2));
+    if d_carcasa > 0.5 {
+        return;
+    }
+    // Aluminio cepillado: vetas horizontales finas y una luz que cae desde arriba a la izquierda.
+    let veta = (azar(p.1.floor() * 7.13) - 0.5) * 11.0 + (azar(p.0 * 0.31 + p.1 * 57.3) - 0.5) * 5.0;
+    let luz = 1.0 - ((p.0 - centro.0) / medio.0 + (p.1 - centro.1) / medio.1) * 0.5;
+    let metal = |base: f64| gris(base + 16.0 * luz + veta);
+    let mut canto = 0.0;
+    if d_carcasa > -3.0 {
+        // Bisel: claro arriba y a la izquierda, oscuro abajo y a la derecha.
+        canto = if (p.0 - centro.0) / medio.0 + (p.1 - centro.1) / medio.1 < 0.0 { 34.0 } else { -46.0 };
+    }
+    pintar(rgba, metal(166.0 + canto), cob(d_carcasa));
+
+    // Pieza hundida: contorno oscuro y relleno.
+    fn hundida(rgba: &mut [f64; 4], d: f64, relleno: [f64; 3]) {
+        pintar(rgba, [92.0, 92.0, 94.0], (0.5 - d).clamp(0.0, 1.0));
+        pintar(rgba, relleno, (-1.5 - d).clamp(0.0, 1.0));
+    }
+
+    // Botón de arranque y dos de velocidad, con su piloto.
+    hundida(rgba, rect_redondo(p, en(-0.96, 0.99), (0.115 * r, 0.075 * r), 0.016 * r), metal(182.0));
+    hundida(rgba, rect_redondo(p, en(-0.705, 1.045), (0.055 * r, 0.03 * r), 0.01 * r), metal(178.0));
+    hundida(rgba, rect_redondo(p, en(-0.565, 1.075), (0.055 * r, 0.03 * r), 0.01 * r), metal(178.0));
+    let piloto = en(-0.74, 1.045);
+    let d = ((p.0 - piloto.0).powi(2) + (p.1 - piloto.1).powi(2)).sqrt() - 0.009 * r;
+    pintar(rgba, [235.0, 60.0, 50.0], cob(d));
+
+    // Hueco con el adaptador para discos de 45.
+    let hueco = en(-0.90, -0.97);
+    let dh = ((p.0 - hueco.0).powi(2) + (p.1 - hueco.1).powi(2)).sqrt();
+    hundida(rgba, dh - 0.105 * r, gris(196.0 + 14.0 * (dh * 0.55).cos() + veta * 0.4));
+    pintar(rgba, gris(120.0), cob((dh - 0.062 * r).abs() - 1.0));
+    pintar(rgba, gris(30.0), cob(dh - 0.022 * r));
+
+    // Control de velocidad: placa, ranura, marcas y mando deslizante.
+    hundida(rgba, rect_redondo(p, en(1.245, 0.61), (0.105 * r, 0.40 * r), 0.014 * r), metal(152.0));
+    let ranura = en(1.275, 0.61);
+    pintar(rgba, gris(26.0), cob(rect_redondo(p, ranura, (0.014 * r, 0.31 * r), 0.014 * r)));
+    let paso = 0.062 * r;
+    let fila = ((p.1 - ranura.1) / paso).round();
+    if fila.abs() <= 5.0 {
+        let largo = if fila == 0.0 { 0.034 } else { 0.022 } * r;
+        let marca = (ranura.0 - 0.038 * r - largo / 2.0, ranura.1 + fila * paso);
+        pintar(rgba, gris(64.0), cob(rect_redondo(p, marca, (largo / 2.0, 1.0), 0.0)));
+    }
+    let mando = (ranura.0, ranura.1 + 0.04 * r);
+    let d_mando = rect_redondo(p, mando, (0.060 * r, 0.034 * r), 0.006 * r);
+    pintar(rgba, [0.0; 3], 0.35 * (1.0 - ((d_mando - 1.0) / (0.02 * r)).clamp(0.0, 1.0)));
+    pintar(rgba, gris(54.0 - 20.0 * (p.1 - mando.1) / (0.034 * r)), cob(d_mando));
+    pintar(rgba, gris(215.0), cob((p.1 - mando.1).abs() - 1.0) * cob(d_mando + 3.0));
+
+    // Plato: foso oscuro, corona torneada con tres filas de puntos y esterilla.
+    let d = ((p.0 - cx).powi(2) + (p.1 - cy).powi(2)).sqrt();
+    let ang = (p.1 - cy).atan2(p.0 - cx);
+    pintar(rgba, gris(24.0), cob(d - 1.128 * r));
+    let brillo = reflejo(ang);
+    let borde = if d > 1.092 * r { 30.0 } else { 0.0 };
+    pintar(rgba, gris(138.0 + 150.0 * brillo + borde), cob(d - 1.106 * r));
+    for (fila, n) in [(1.028, 168.0), (1.050, 172.0), (1.072, 176.0)] {
+        let celda = ang * n / std::f64::consts::TAU;
+        let arco = (celda - celda.round()) * std::f64::consts::TAU * d / n;
+        let dp = (arco.powi(2) + (d - fila * r).powi(2)).sqrt() - 0.0062 * r;
+        pintar(rgba, gris(58.0 + 60.0 * brillo), cob(dp));
+    }
+    pintar(rgba, gris(70.0), cob((d - 1.006 * r).abs() - 1.5));
+    pintar(rgba, gris(20.0), cob(d - 1.002 * r));
 }
 
 /// Máscara de franjas verticales para convertir la onda en barras.

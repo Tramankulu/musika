@@ -66,6 +66,7 @@ struct Opciones {
     fuente: Option<PathBuf>,
     forzar: bool,
     rpm: f64,
+    fondo: String,
 }
 
 const AYUDA: &str = "\
@@ -92,6 +93,7 @@ OPCIONES:
         --pico <n>              Pico real máximo a medida en dBTP, p. ej. -1
         --forzar-nivel          Llega siempre al nivel pedido aunque haya que comprimir
                                 (por defecto solo se aplica una ganancia fija)
+        --fondo <tipo>          tocadiscos (chasis de aluminio) | liso   [por defecto: tocadiscos]
         --rpm <n>               Vueltas por minuto del disco en el vídeo    [por defecto: 8]
         --fuente <archivo.ttf>  Tipografía para los textos del vídeo
     -l, --listar                Muestra los niveles de cada plataforma
@@ -137,6 +139,7 @@ fn opciones_por_defecto(entrada: PathBuf) -> Opciones {
         fuente: None,
         forzar: false,
         rpm: 8.0,
+        fondo: "tocadiscos".into(),
     }
 }
 
@@ -186,6 +189,7 @@ fn parsear_args(args: &[String]) -> Res<Option<Opciones>> {
             "--fuente" => o.fuente = Some(PathBuf::from(valor()?)),
             "--forzar-nivel" => o.forzar = true,
             "--rpm" => o.rpm = numero(&valor()?, "--rpm")?,
+            "--fondo" => o.fondo = valor()?.to_lowercase(),
             _ if a.starts_with('-') && a.len() > 1 => {
                 return Err(format!("Opción desconocida: {a}\nUsa --ayuda para ver las opciones."))
             }
@@ -509,18 +513,18 @@ fn diseno(formato: &str) -> Res<Diseno> {
     Ok(match formato {
         "horizontal" => Diseno {
             ancho: 1920, alto: 1080, disco: 820, disco_x: 90, disco_y: 130,
-            panel: (1070, 290, 780, 560), contenido: (1126, 668), centrado: false,
+            panel: (1110, 290, 750, 560), contenido: (1162, 646), centrado: false,
             titulo_y: 352, titulo_max: 72.0, ondas: (560, 120), barra_y: 734,
         },
         "vertical" => Diseno {
-            ancho: 1080, alto: 1920, disco: 800, disco_x: 110, disco_y: 200,
-            panel: (60, 1120, 960, 640), contenido: (116, 848), centrado: true,
-            titulo_y: 1186, titulo_max: 76.0, ondas: (1400, 150), barra_y: 1624,
+            ancho: 1080, alto: 1920, disco: 800, disco_x: 100, disco_y: 220,
+            panel: (60, 1150, 960, 620), contenido: (116, 848), centrado: true,
+            titulo_y: 1212, titulo_max: 76.0, ondas: (1420, 150), barra_y: 1644,
         },
         "cuadrado" => Diseno {
-            ancho: 1080, alto: 1080, disco: 580, disco_x: 210, disco_y: 40,
-            panel: (110, 660, 860, 390), contenido: (160, 760), centrado: true,
-            titulo_y: 696, titulo_max: 56.0, ondas: (838, 86), barra_y: 956,
+            ancho: 1080, alto: 1080, disco: 580, disco_x: 210, disco_y: 55,
+            panel: (110, 706, 860, 356), contenido: (160, 760), centrado: true,
+            titulo_y: 734, titulo_max: 52.0, ondas: (862, 74), barra_y: 968,
         },
         _ => return Err(format!("Formato de vídeo no válido «{formato}»: usa horizontal, vertical o cuadrado")),
     })
@@ -622,7 +626,7 @@ fn crear_video(ff: &Ff, tmp: &Path, o: &Opciones, v: &Video) -> Res<()> {
     let centro = (d.disco_x as f64 + lado as f64 / 2.0, d.disco_y as f64 + lado as f64 / 2.0, lado as f64 / 2.0);
     let panel = (d.panel.0 as f64, d.panel.1 as f64, d.panel.2 as f64, d.panel.3 as f64);
     png("disco.png", lado, lado, &imagen::dibujar_disco(lado, o.color))?;
-    let fondo = imagen::dibujar_fondo(d.ancho, d.alto, o.color, centro, caratula.is_some(), panel);
+    let fondo = imagen::dibujar_fondo(d.ancho, d.alto, o.color, centro, caratula.is_some(), panel, o.fondo == "tocadiscos");
     png("fondo.png", d.ancho, d.alto, &fondo)?;
     let (bx, by, bw, bh, brazo) = imagen::dibujar_brazo((d.ancho, d.alto), centro, o.color);
     png("brazo.png", bw, bh, &brazo)?;
@@ -844,6 +848,12 @@ fn ejecutar(o: Opciones) -> Res<()> {
     }
     codec_audio(&o.formato)?;
     diseno(&o.video_formato)?;
+    if o.fondo != "tocadiscos" && o.fondo != "liso" {
+        return Err(format!("Fondo no válido «{}»: usa tocadiscos o liso", o.fondo));
+    }
+    if !(0.0..=120.0).contains(&o.rpm) {
+        return Err("Valor fuera de rango: --rpm admite de 0 a 120.".into());
+    }
     let lista = objetivos(&o)?;
 
     let dir = match &o.dir {
