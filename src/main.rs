@@ -86,7 +86,8 @@ OPCIONES:
     -o, --dir <carpeta>         Carpeta de salida (por defecto: la de la canción)
         --caratula <imagen>     Imagen para la etiqueta del disco y el fondo del vídeo
         --color <RRGGBB>        Color de la etiqueta y del fondo  [por defecto: D9482B]
-        --video-formato <f>     horizontal (1920x1080) | vertical (1080x1920) | cuadrado (1080x1080)
+        --video-formato <f>     horizontal (1920x1080) | vertical (1080x1920, Shorts) |
+                                cuadrado (1080x1080)
         --lufs <n>              Sonoridad a medida, p. ej. -14 (crea la salida «personalizado»)
         --pico <n>              Pico real máximo a medida en dBTP, p. ej. -1
         --forzar-nivel          Llega siempre al nivel pedido aunque haya que comprimir
@@ -746,7 +747,7 @@ fn crear_video(ff: &Ff, tmp: &Path, o: &Opciones, v: &Video) -> Res<()> {
          [onda][4:v]blend=all_mode=multiply,format=rgba,lutrgb=r={}:g={}:b={},colorchannelmixer=aa=0.9[ondas];\
          [b2][ondas]overlay={cx}:{oy}:format=auto[b3];\
          {barra}\
-         [b4]{textos},fade=t=in:d=0.8,format=yuv420p[v]",
+         [b4]{textos},fade=t=in:d=0.8,scale=out_color_matrix=bt709:out_range=tv,format=yuv420p[v]",
         d.disco_x, d.disco_y, acento[0], acento[1], acento[2]
     );
 
@@ -755,8 +756,15 @@ fn crear_video(ff: &Ff, tmp: &Path, o: &Opciones, v: &Video) -> Res<()> {
         args.extend(["-loop", "1", "-framerate", "30", "-i", imagen].map(String::from));
     }
     args.extend(["-filter_complex", &grafo, "-map", "[v]", "-map", "0:a:0"].map(String::from));
-    args.extend(["-c:v", "libx264", "-preset", "medium", "-crf", "18", "-r", "30"].map(String::from));
-    args.extend(["-c:a", "aac", "-b:a", "320k", "-ar", "48000", "-movflags", "+faststart"].map(String::from));
+    // Ajustes de subida que recomienda YouTube: H.264 High progresivo, 2 fotogramas B,
+    // GOP cerrado de medio segundo, 4:2:0, color BT.709, AAC-LC estéreo a 48 kHz y
+    // 384 kbps, y MP4 con el índice al principio y sin listas de edición.
+    args.extend(["-c:v", "libx264", "-preset", "medium", "-crf", "17", "-r", "30"].map(String::from));
+    args.extend(["-profile:v", "high", "-bf", "2", "-g", "15", "-flags", "+cgop"].map(String::from));
+    args.extend(["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"].map(String::from));
+    args.extend(["-color_range", "tv"].map(String::from));
+    args.extend(["-c:a", "aac", "-b:a", "384k", "-ar", "48000", "-ac", "2"].map(String::from));
+    args.extend(["-movflags", "+faststart", "-use_editlist", "0"].map(String::from));
     args.extend(["-metadata".to_string(), format!("title={}", v.titulo)]);
     if !v.artista.is_empty() {
         args.extend(["-metadata".to_string(), format!("artist={}", v.artista)]);
@@ -901,9 +909,10 @@ fn ejecutar(o: Opciones) -> Res<()> {
     }
 
     if o.salida != Salida::Audio {
-        // El vídeo lleva el ajuste de YouTube si se ha pedido; si no, el de la primera plataforma.
-        let ob = lista.iter().find(|x| x.id == "youtube").unwrap_or(&lista[0]);
-        println!("Preparando el vídeo (audio con el ajuste de {}):", ob.nombre);
+        // El vídeo es para YouTube: su audio lleva siempre el ajuste de YouTube.
+        let yt = PLATAFORMAS.iter().find(|p| p.id == "youtube").expect("YouTube está en la lista");
+        let ob = &Objetivo { id: yt.id.into(), nombre: yt.nombre.into(), lufs: yt.lufs, pico: yt.pico };
+        println!("Preparando el vídeo para YouTube:");
         let master = tmp.0.join("master.wav");
         let d = Destino { archivo: &master, formato: "wav", frecuencia: Some(48000), etiquetas: &[] };
         let r = ajustar(&ff, &tmp.0, &entrada, ob, &m, &d, o.forzar)?;

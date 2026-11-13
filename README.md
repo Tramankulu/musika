@@ -21,7 +21,7 @@ Hace falta [FFmpeg](https://ffmpeg.org) (musika lo usa para el audio y el vídeo
 En Ubuntu (22.04 o posterior), el `.deb` se instala así y trae FFmpeg como dependencia:
 
 ```
-sudo apt install ./musika_0.3.0_amd64.deb
+sudo apt install ./musika_0.3.1_amd64.deb
 ```
 
 **Compilar a mano** (con [Rust](https://rustup.rs) instalado):
@@ -108,4 +108,12 @@ Un tocadiscos visto desde arriba, con un panel de reproductor al lado:
 
 Los textos usan la tipografía más moderna que encuentre en el sistema (Inter, Poppins o Ubuntu en Linux; Segoe UI en Windows) o la que indiques con `--fuente`.
 
-H.264 a 30 fps con audio AAC a 320 kbps, usando el ajuste de YouTube si está entre las plataformas pedidas y, si no, el de la primera.
+### Pensado para YouTube
+
+El vídeo sale con los [ajustes de subida que recomienda YouTube](https://support.google.com/youtube/answer/1722171) y su audio lleva siempre el nivel de YouTube (−14 LUFS, −1 dBTP), sea cual sea la plataforma elegida con `-p` para los archivos de audio:
+
+- MP4 con el índice al principio (*fast start*) y sin listas de edición.
+- Vídeo H.264 perfil High, progresivo, 30 fps, 2 fotogramas B, GOP cerrado de medio segundo, 4:2:0 y color BT.709.
+- Audio AAC-LC estéreo a 48 kHz y 384 kbps.
+
+El formato `horizontal` (1920×1080) es el de un vídeo normal; el `vertical` (1080×1920) es el de los Shorts.
