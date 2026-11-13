@@ -21,7 +21,7 @@ Hace falta [FFmpeg](https://ffmpeg.org) (musika lo usa para el audio y el vídeo
 En Ubuntu (22.04 o posterior), el `.deb` se instala así y trae FFmpeg como dependencia:
 
 ```
-sudo apt install ./musika_0.5.0_amd64.deb
+sudo apt install ./musika_0.6.0_amd64.deb
 ```
 
 **Compilar a mano** (con [Rust](https://rustup.rs) instalado):
@@ -30,11 +30,20 @@ sudo apt install ./musika_0.5.0_amd64.deb
 cargo build --release
 ```
 
-El ejecutable queda en `target/release/musika` (`musika.exe` en Windows). No tiene dependencias de Rust. En Ubuntu, `sh empaquetado/deb.sh` crea después el `.deb`.
+El ejecutable queda en `target/release/musika` (`musika.exe` en Windows) y no tiene dependencias de Rust. La ventana es un proyecto aparte, en `gui/`, que sí las tiene (egui): `cargo build --release --manifest-path gui/Cargo.toml`. En Ubuntu, `sh empaquetado/deb.sh` crea después el `.deb` con las dos cosas.
 
 ## Uso
 
-Sin argumentos (o con doble clic en Windows) arranca un **modo guiado** que va preguntando.
+### Con ventana
+
+Hay una aplicación de escritorio, **musika-gui**, con un formulario para elegir la canción, las plataformas, el diseño del vídeo, el color, etc., y un botón *Crear*. También se puede arrastrar la canción (o la imagen de la carátula) sobre la ventana.
+
+- **Ubuntu:** tras instalar el `.deb` aparece como *musika* en el menú de aplicaciones.
+- **Windows:** descomprime el zip y abre `musika-gui.exe` (tiene que estar en la misma carpeta que `musika.exe`).
+
+### Desde la terminal
+
+Sin argumentos arranca un **modo guiado** que va preguntando.
 
 ```
 musika <canción> [opciones]
