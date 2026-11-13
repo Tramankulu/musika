@@ -83,6 +83,17 @@ pub fn escribir_png(ruta: &Path, ancho: usize, alto: usize, rgba: &[u8]) -> std:
     w.flush()
 }
 
+/// Escribe una imagen PGM de 16 bits (un mapa de coordenadas para el filtro remap).
+pub fn escribir_pgm16(ruta: &Path, ancho: usize, alto: usize, datos: &[u16]) -> std::io::Result<()> {
+    assert_eq!(datos.len(), ancho * alto);
+    let mut w = BufWriter::new(File::create(ruta)?);
+    write!(w, "P5\n{ancho} {alto}\n65535\n")?;
+    for v in datos {
+        w.write_all(&v.to_be_bytes())?;
+    }
+    w.flush()
+}
+
 /// Radio de la etiqueta central respecto al radio del disco.
 pub const R_ETIQUETA: f64 = 0.36;
 /// Radio del agujero central respecto al radio del disco.
@@ -618,4 +629,80 @@ pub fn dibujar_brazo(
         }
     }
     (x0, y0, w, h, px)
+}
+
+/// Piezas del diseño «ondas»: anillos de onda de colores alrededor del disco.
+pub struct Ondas {
+    /// Mapas para remap: de cada píxel del vídeo a la tira de ondas.
+    pub mapa_x: Vec<u16>,
+    pub mapa_y: Vec<u16>,
+    /// Color de cada píxel (RGBA opaco), según su anillo y su ángulo.
+    pub colores: Vec<u8>,
+}
+
+/// Prepara los anillos de onda. La tira de origen mide `tira_ancho` de ancho
+/// y tiene `bandas` franjas de `banda_alto` píxeles (graves, medios y agudos),
+/// una encima de otra. Cada anillo enrolla una franja alrededor del disco,
+/// reflejada a izquierda y derecha para que cierre sin costura.
+pub fn preparar_ondas(
+    lienzo: (usize, usize),
+    disco: (f64, f64, f64),
+    color: Rgb,
+    tira_ancho: usize,
+    banda_alto: usize,
+    bandas: usize,
+) -> Ondas {
+    let (ancho, alto) = lienzo;
+    let (cx, cy, r) = disco;
+    let inicio = r * 1.02;
+    let n = ancho * alto;
+    let mut o = Ondas { mapa_x: vec![0; n], mapa_y: vec![0; n], colores: vec![255; n * 4] };
+    for y in 0..alto {
+        for x in 0..ancho {
+            let (dx, dy) = (x as f64 + 0.5 - cx, y as f64 + 0.5 - cy);
+            let d = (dx * dx + dy * dy).sqrt() - inicio;
+            let i = y * ancho + x;
+            if d < 0.0 {
+                o.colores[i * 4..i * 4 + 3].fill(0);
+                continue;
+            }
+            let u = dx.atan2(-dy).abs() / PI; // 0 arriba, 1 abajo
+            let anillo = (d / banda_alto as f64).floor();
+            let k = anillo as usize;
+            let en_banda = (d - anillo * banda_alto as f64).min(banda_alto as f64 - 1.0);
+            // Los anillos alternos van al revés para que no se repita el dibujo.
+            let ux = if k % 2 == 0 { u } else { 1.0 - u };
+            o.mapa_x[i] = (ux * (tira_ancho - 1) as f64).round() as u16;
+            o.mapa_y[i] = ((k % bandas * banda_alto) as f64 + en_banda).round() as u16;
+            // Cada anillo cambia de tono, y el tono gira un poco a lo largo del anillo.
+            let tono = girar_tono(color, anillo * 48.0 + u * 70.0, 1.0);
+            let luz = (1.0 - 0.085 * anillo).max(0.30);
+            let max = tono[0].max(tono[1]).max(tono[2]).max(1.0);
+            for c in 0..3 {
+                o.colores[i * 4 + c] = (tono[c] / max * 255.0 * luz) as u8;
+            }
+        }
+    }
+    o
+}
+
+/// Velo que va sobre las ondas: sombra alrededor del disco, viñeta y un
+/// oscurecido en la zona de los textos (de `texto_y` hacia abajo).
+pub fn dibujar_velo_ondas(ancho: usize, alto: usize, disco: (f64, f64, f64), texto_y: f64) -> Vec<u8> {
+    let (cx, cy, r) = disco;
+    let diag = ((ancho * ancho + alto * alto) as f64).sqrt();
+    let mut px = vec![0u8; ancho * alto * 4];
+    for y in 0..alto {
+        for x in 0..ancho {
+            let (fx, fy) = (x as f64 + 0.5, y as f64 + 0.5);
+            let d = ((fx - cx).powi(2) + (fy - cy - r * 0.03).powi(2)).sqrt();
+            let sombra = 0.75 * (1.0 - ((d - r) / (r * 0.22)).clamp(0.0, 1.0)).powi(2);
+            let dc = ((fx - ancho as f64 / 2.0).powi(2) + (fy - alto as f64 / 2.0).powi(2)).sqrt() / (diag / 2.0);
+            let vineta = 0.45 * dc.powf(2.2);
+            let texto = 0.80 * ((fy - texto_y + 110.0) / 110.0).clamp(0.0, 1.0);
+            let a = 1.0 - (1.0 - sombra) * (1.0 - vineta) * (1.0 - texto);
+            px[(y * ancho + x) * 4 + 3] = (a * 255.0) as u8;
+        }
+    }
+    px
 }

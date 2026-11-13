@@ -67,6 +67,7 @@ struct Opciones {
     forzar: bool,
     rpm: f64,
     fondo: String,
+    diseno: String,
 }
 
 const AYUDA: &str = "\
@@ -93,7 +94,11 @@ OPCIONES:
         --pico <n>              Pico real máximo a medida en dBTP, p. ej. -1
         --forzar-nivel          Llega siempre al nivel pedido aunque haya que comprimir
                                 (por defecto solo se aplica una ganancia fija)
-        --fondo <tipo>          tocadiscos (chasis de aluminio) | liso   [por defecto: tocadiscos]
+        --diseno <tipo>         Diseño del vídeo:                        [por defecto: tocadiscos]
+                                  tocadiscos  tocadiscos de aluminio con panel de reproductor
+                                  ondas       solo el disco, con ondas de colores que
+                                              siguen la música por detrás
+        --fondo <tipo>          En el diseño tocadiscos: tocadiscos (con chasis) | liso
         --rpm <n>               Vueltas por minuto del disco en el vídeo    [por defecto: 8]
         --fuente <archivo.ttf>  Tipografía para los textos del vídeo
     -l, --listar                Muestra los niveles de cada plataforma
@@ -140,6 +145,7 @@ fn opciones_por_defecto(entrada: PathBuf) -> Opciones {
         forzar: false,
         rpm: 8.0,
         fondo: "tocadiscos".into(),
+        diseno: "tocadiscos".into(),
     }
 }
 
@@ -190,6 +196,7 @@ fn parsear_args(args: &[String]) -> Res<Option<Opciones>> {
             "--forzar-nivel" => o.forzar = true,
             "--rpm" => o.rpm = numero(&valor()?, "--rpm")?,
             "--fondo" => o.fondo = valor()?.to_lowercase(),
+            "--diseno" | "--diseño" => o.diseno = valor()?.to_lowercase(),
             _ if a.starts_with('-') && a.len() > 1 => {
                 return Err(format!("Opción desconocida: {a}\nUsa --ayuda para ver las opciones."))
             }
@@ -254,6 +261,12 @@ fn modo_guiado() -> Res<Opciones> {
         let a = preguntar("Artista [Intro = el del archivo]: ");
         if !a.is_empty() {
             o.artista = Some(a);
+        }
+        let ds = preguntar("Diseño del vídeo: 1) tocadiscos  2) disco con ondas de colores [1]: ");
+        match ds.as_str() {
+            "" | "1" | "tocadiscos" => {}
+            "2" | "ondas" => o.diseno = "ondas".into(),
+            _ => return Err(format!("Diseño no válido «{ds}»: usa 1 o 2")),
         }
         let c = preguntar("Imagen para la etiqueta del disco [Intro = ninguna]: ");
         if !c.is_empty() {
@@ -509,22 +522,43 @@ struct Diseno {
     barra_y: usize,
 }
 
-fn diseno(formato: &str) -> Res<Diseno> {
-    Ok(match formato {
-        "horizontal" => Diseno {
+fn diseno(formato: &str, estilo: &str) -> Res<Diseno> {
+    let ondas = match estilo {
+        "tocadiscos" => false,
+        "ondas" => true,
+        _ => return Err(format!("Diseño no válido «{estilo}»: usa tocadiscos u ondas")),
+    };
+    Ok(match (formato, ondas) {
+        ("horizontal", false) => Diseno {
             ancho: 1920, alto: 1080, disco: 820, disco_x: 90, disco_y: 130,
             panel: (1110, 290, 750, 560), contenido: (1162, 646), centrado: false,
             titulo_y: 352, titulo_max: 72.0, ondas: (560, 120), barra_y: 734,
         },
-        "vertical" => Diseno {
+        ("vertical", false) => Diseno {
             ancho: 1080, alto: 1920, disco: 800, disco_x: 100, disco_y: 220,
             panel: (60, 1150, 960, 620), contenido: (116, 848), centrado: true,
             titulo_y: 1212, titulo_max: 76.0, ondas: (1420, 150), barra_y: 1644,
         },
-        "cuadrado" => Diseno {
+        ("cuadrado", false) => Diseno {
             ancho: 1080, alto: 1080, disco: 580, disco_x: 210, disco_y: 55,
             panel: (110, 706, 860, 356), contenido: (160, 760), centrado: true,
             titulo_y: 734, titulo_max: 52.0, ondas: (862, 74), barra_y: 968,
+        },
+        // Diseño «ondas»: el disco centrado y los textos debajo, sin panel.
+        ("horizontal", true) => Diseno {
+            ancho: 1920, alto: 1080, disco: 600, disco_x: 660, disco_y: 130,
+            panel: (0, 0, 0, 0), contenido: (560, 800), centrado: true,
+            titulo_y: 806, titulo_max: 62.0, ondas: (0, 0), barra_y: 968,
+        },
+        ("vertical", true) => Diseno {
+            ancho: 1080, alto: 1920, disco: 760, disco_x: 160, disco_y: 400,
+            panel: (0, 0, 0, 0), contenido: (140, 800), centrado: true,
+            titulo_y: 1380, titulo_max: 72.0, ondas: (0, 0), barra_y: 1600,
+        },
+        ("cuadrado", true) => Diseno {
+            ancho: 1080, alto: 1080, disco: 540, disco_x: 270, disco_y: 110,
+            panel: (0, 0, 0, 0), contenido: (190, 700), centrado: true,
+            titulo_y: 790, titulo_max: 54.0, ondas: (0, 0), barra_y: 958,
         },
         _ => return Err(format!("Formato de vídeo no válido «{formato}»: usa horizontal, vertical o cuadrado")),
     })
@@ -604,7 +638,8 @@ fn mm_ss(segundos: f64) -> String {
 }
 
 fn crear_video(ff: &Ff, tmp: &Path, o: &Opciones, v: &Video) -> Res<()> {
-    let d = diseno(&o.video_formato)?;
+    let d = diseno(&o.video_formato, &o.diseno)?;
+    let con_ondas = o.diseno == "ondas";
     let lado = d.disco;
     let escribir = |nombre: &str, datos: &[u8]| {
         std::fs::write(tmp.join(nombre), datos).map_err(|e| format!("No se pudo escribir un archivo temporal: {e}"))
@@ -622,21 +657,84 @@ fn crear_video(ff: &Ff, tmp: &Path, o: &Opciones, v: &Video) -> Res<()> {
     let acento = [claro(o.color.0), claro(o.color.1), claro(o.color.2)];
     let acento_hex = format!("0x{:02X}{:02X}{:02X}", acento[0], acento[1], acento[2]);
 
-    // Imágenes base: disco, fondo (con plato y panel), brazo y piezas del visualizador.
+    // Imágenes base. Cada diseño prepara las suyas y deja el fondo compuesto en [b3].
     let centro = (d.disco_x as f64 + lado as f64 / 2.0, d.disco_y as f64 + lado as f64 / 2.0, lado as f64 / 2.0);
-    let panel = (d.panel.0 as f64, d.panel.1 as f64, d.panel.2 as f64, d.panel.3 as f64);
     png("disco.png", lado, lado, &imagen::dibujar_disco(lado, o.color))?;
-    let fondo = imagen::dibujar_fondo(d.ancho, d.alto, o.color, centro, caratula.is_some(), panel, o.fondo == "tocadiscos");
-    png("fondo.png", d.ancho, d.alto, &fondo)?;
-    let (bx, by, bw, bh, brazo) = imagen::dibujar_brazo((d.ancho, d.alto), centro, o.color);
-    png("brazo.png", bw, bh, &brazo)?;
     let (cx, cw) = d.contenido;
-    let (oy, oh) = d.ondas;
-    const PASO: usize = 12; // cada barra del visualizador: 6 px de barra y 6 de hueco
-    let barras = cw / PASO;
-    png("barras.png", barras * PASO, oh, &imagen::dibujar_barras(barras * PASO, oh, PASO / 2, PASO))?;
     const PUNTO: usize = 18;
     png("punto.png", PUNTO, PUNTO, &imagen::dibujar_punto(PUNTO, acento))?;
+    // Entradas de FFmpeg además del audio (0) y el disco (1); se numeran al añadirlas.
+    let mut imagenes: Vec<(&str, bool)> = Vec::new(); // (archivo, se repite en bucle)
+    let mut entrada = |archivo: &'static str, bucle: bool| {
+        imagenes.push((archivo, bucle));
+        imagenes.len() + 1
+    };
+    let giro = o.rpm * std::f64::consts::TAU / 60.0;
+    let rotar = format!("rotate=a={giro:.5}*t:c=black@0:ow=iw:oh=ih[disco]");
+    let mut usa_fondo_png = false;
+    let escena = if con_ondas {
+        // Ondas: tres franjas de onda (graves, medios, agudos) enrolladas en
+        // anillos alrededor del disco, teñidas, con estela y resplandor.
+        const TIRA: usize = 1280;
+        const BANDAS: usize = 3;
+        let banda = (lado as f64 * 0.20) as usize / 2 * 2;
+        let ondas = imagen::preparar_ondas((d.ancho, d.alto), centro, o.color, TIRA, banda, BANDAS);
+        let pgm = |nombre: &str, datos: &[u16]| {
+            imagen::escribir_pgm16(&tmp.join(nombre), d.ancho, d.alto, datos)
+                .map_err(|e| format!("No se pudo crear {nombre}: {e}"))
+        };
+        pgm("mapa_x.pgm", &ondas.mapa_x)?;
+        pgm("mapa_y.pgm", &ondas.mapa_y)?;
+        png("colores.png", d.ancho, d.alto, &ondas.colores)?;
+        let velo = imagen::dibujar_velo_ondas(d.ancho, d.alto, centro, d.titulo_y as f64);
+        png("velo.png", d.ancho, d.alto, &velo)?;
+        let (mx, my) = (entrada("mapa_x.pgm", false), entrada("mapa_y.pgm", false));
+        let (col, vel) = (entrada("colores.png", true), entrada("velo.png", true));
+        let onda = format!("showwaves=s={TIRA}x{banda}:mode=p2p:draw=full:rate=30:colors=white");
+        format!(
+            "[0:a]aformat=channel_layouts=mono,asplit=3[g1][g2][g3];\
+             [g1]lowpass=f=250,volume=2,{onda}[o1];\
+             [g2]highpass=f=250,lowpass=f=2000,volume=3,{onda}[o2];\
+             [g3]highpass=f=2000,lowpass=f=9000,volume=4,{onda}[o3];\
+             [o1][o2][o3]vstack=3,format=gbrp[tira];\
+             [tira][{mx}:v][{my}:v]remap,format=gbrp[anillos];\
+             [{col}:v]format=gbrp[tinte];\
+             [anillos][tinte]blend=all_mode=multiply:shortest=1,lagfun=decay=0.88,split[nitido][difuso];\
+             [difuso]scale=iw/4:ih/4:flags=bilinear,gblur=sigma=3.5,scale={}:{}:flags=bilinear[halo];[nitido][halo]blend=all_mode=addition[luces];\
+             [luces][{vel}:v]overlay=format=auto[b1];\
+             [1:v]{{filtro_disco}},{rotar};\
+             [b1][disco]overlay={}:{}:format=auto[b3];",
+            d.ancho, d.alto, d.disco_x, d.disco_y
+        )
+    } else {
+        // Tocadiscos: fondo con chasis y panel, brazo y visualizador de barras.
+        let panel = (d.panel.0 as f64, d.panel.1 as f64, d.panel.2 as f64, d.panel.3 as f64);
+        let chasis = o.fondo == "tocadiscos";
+        let fondo = imagen::dibujar_fondo(d.ancho, d.alto, o.color, centro, caratula.is_some(), panel, chasis);
+        png("fondo.png", d.ancho, d.alto, &fondo)?;
+        usa_fondo_png = true;
+        let (bx, by, bw, bh, brazo) = imagen::dibujar_brazo((d.ancho, d.alto), centro, o.color);
+        png("brazo.png", bw, bh, &brazo)?;
+        let (oy, oh) = d.ondas;
+        const PASO: usize = 12; // cada barra del visualizador: 6 px de barra y 6 de hueco
+        let barras = cw / PASO;
+        let ancho_barras = barras * PASO;
+        png("barras.png", ancho_barras, oh, &imagen::dibujar_barras(ancho_barras, oh, PASO / 2, PASO))?;
+        let (fon, bra, bar) = (entrada("FONDO", true), entrada("brazo.png", true), entrada("barras.png", true));
+        // Visualizador: la onda a baja resolución (una columna por barra),
+        // ampliada sin suavizar y recortada con la máscara de franjas.
+        format!(
+            "[1:v]{{filtro_disco}},{rotar};\
+             [{fon}:v][disco]overlay={}:{}:format=auto[b1];\
+             [b1][{bra}:v]overlay={bx}:{by}:format=auto[b2];\
+             [0:a]aformat=channel_layouts=mono,showwaves=s={barras}x{oh}:mode=cline:draw=full:scale=sqrt:rate=30:colors=white,\
+             format=rgba,scale={ancho_barras}:{oh}:flags=neighbor[onda];\
+             [onda][{bar}:v]blend=all_mode=multiply,format=rgba,lutrgb=r={}:g={}:b={},colorchannelmixer=aa=0.9[ondas];\
+             [b2][ondas]overlay={cx}:{oy}:format=auto[b3];",
+            d.disco_x, d.disco_y, acento[0], acento[1], acento[2]
+        )
+    };
+    let punto = entrada("punto.png", true);
 
     // Tipografías: se copian a la carpeta temporal para referirlas por nombre
     // y no tener que escapar rutas (las de Windows llevan «:»).
@@ -675,17 +773,19 @@ fn crear_video(ff: &Ff, tmp: &Path, o: &Opciones, v: &Video) -> Res<()> {
         ffmpeg(ff, tmp, &args).map_err(|e| format!("No se pudo usar la carátula. {e}"))?;
         disco_listo = "disco2.png";
 
-        let grafo = format!(
-            "[1:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},gblur=sigma={s},\
-             eq=saturation=1.25,format=rgba[c];[c][0:v]overlay=format=auto",
-            w = d.ancho,
-            h = d.alto,
-            s = d.ancho.max(d.alto) / 32
-        );
-        let mut args: Vec<String> = ["-i", "fondo.png", "-i", caratula].map(String::from).to_vec();
-        args.extend(["-filter_complex", &grafo, "-frames:v", "1", "-update", "1", "fondo2.png"].map(String::from));
-        ffmpeg(ff, tmp, &args).map_err(|e| format!("No se pudo usar la carátula. {e}"))?;
-        fondo_listo = "fondo2.png";
+        if usa_fondo_png {
+            let grafo = format!(
+                "[1:v]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},gblur=sigma={s},\
+                 eq=saturation=1.25,format=rgba[c];[c][0:v]overlay=format=auto",
+                w = d.ancho,
+                h = d.alto,
+                s = d.ancho.max(d.alto) / 32
+            );
+            let mut args: Vec<String> = ["-i", "fondo.png", "-i", caratula].map(String::from).to_vec();
+            args.extend(["-filter_complex", &grafo, "-frames:v", "1", "-update", "1", "fondo2.png"].map(String::from));
+            ffmpeg(ff, tmp, &args).map_err(|e| format!("No se pudo usar la carátula. {e}"))?;
+            fondo_listo = "fondo2.png";
+        }
     } else {
         let lum = 0.299 * o.color.0 as f64 + 0.587 * o.color.1 as f64 + 0.114 * o.color.2 as f64;
         let tinta = if lum > 150.0 { "0x141414" } else { "white" };
@@ -725,7 +825,7 @@ fn crear_video(ff: &Ff, tmp: &Path, o: &Opciones, v: &Video) -> Res<()> {
             "color=c=white@0.20:s={cw}x4:r=30,format=rgba[pista];color=c={acento_hex}:s={cw}x4:r=30,format=rgba[avance];\
              [pista][avance]overlay=x='-w+w*t/{dur:.3}':y=0:format=auto[barra];\
              [b3][barra]overlay={cx}:{py}:format=auto[b3b];\
-             [b3b][5:v]overlay=x='{cx}+{cw}*t/{dur:.3}-{m}':y={ty}:format=auto[b4];",
+             [b3b][{punto}:v]overlay=x='{cx}+{cw}*t/{dur:.3}-{m}':y={ty}:format=auto[b4];",
             m = PUNTO / 2,
             ty = py + 2 - PUNTO / 2
         );
@@ -738,32 +838,26 @@ fn crear_video(ff: &Ff, tmp: &Path, o: &Opciones, v: &Video) -> Res<()> {
         textos += &format!(",{}", texto("total.txt", &mm_ss(dur), &estilo, 22, &x, &y)?);
     }
 
-    // Visualizador: la onda a baja resolución (una columna por barra),
-    // ampliada sin suavizar y recortada con la máscara de franjas.
-    let giro = o.rpm * std::f64::consts::TAU / 60.0;
-    let ancho_barras = barras * PASO;
     let grafo = format!(
-        "[1:v]{filtro_disco},rotate=a={giro:.5}*t:c=black@0:ow=iw:oh=ih[disco];\
-         [2:v][disco]overlay={}:{}:format=auto[b1];\
-         [b1][3:v]overlay={bx}:{by}:format=auto[b2];\
-         [0:a]aformat=channel_layouts=mono,showwaves=s={barras}x{oh}:mode=cline:draw=full:scale=sqrt:rate=30:colors=white,\
-         format=rgba,scale={ancho_barras}:{oh}:flags=neighbor[onda];\
-         [onda][4:v]blend=all_mode=multiply,format=rgba,lutrgb=r={}:g={}:b={},colorchannelmixer=aa=0.9[ondas];\
-         [b2][ondas]overlay={cx}:{oy}:format=auto[b3];\
-         {barra}\
-         [b4]{textos},fade=t=in:d=0.8,scale=out_color_matrix=bt709:out_range=tv,format=yuv420p[v]",
-        d.disco_x, d.disco_y, acento[0], acento[1], acento[2]
+        "{}{barra}[b4]{textos},fade=t=in:d=0.8,scale=out_color_matrix=bt709:out_range=tv,format=yuv420p[v]",
+        escena.replace("{filtro_disco}", &filtro_disco)
     );
 
     let mut args = vec!["-i".to_string(), ruta(v.audio)];
-    for imagen in [disco_listo, fondo_listo, "brazo.png", "barras.png", "punto.png"] {
-        args.extend(["-loop", "1", "-framerate", "30", "-i", imagen].map(String::from));
+    args.extend(["-loop", "1", "-framerate", "30", "-i", disco_listo].map(String::from));
+    for (archivo, bucle) in &imagenes {
+        if *bucle {
+            args.extend(["-loop", "1", "-framerate", "30"].map(String::from));
+        }
+        args.extend(["-i", if *archivo == "FONDO" { fondo_listo } else { archivo }].map(String::from));
     }
     args.extend(["-filter_complex", &grafo, "-map", "[v]", "-map", "0:a:0"].map(String::from));
     // Ajustes de subida que recomienda YouTube: H.264 High progresivo, 2 fotogramas B,
     // GOP cerrado de medio segundo, 4:2:0, color BT.709, AAC-LC estéreo a 48 kHz y
     // 384 kbps, y MP4 con el índice al principio y sin listas de edición.
+    // El tope de 12 Mb/s evita archivos enormes con las ondas, que tienen mucho detalle fino.
     args.extend(["-c:v", "libx264", "-preset", "medium", "-crf", "17", "-r", "30"].map(String::from));
+    args.extend(["-maxrate", "12M", "-bufsize", "24M"].map(String::from));
     args.extend(["-profile:v", "high", "-bf", "2", "-g", "15", "-flags", "+cgop"].map(String::from));
     args.extend(["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709"].map(String::from));
     args.extend(["-color_range", "tv"].map(String::from));
@@ -847,7 +941,7 @@ fn ejecutar(o: Opciones) -> Res<()> {
         return Err(format!("No existe el archivo {}", entrada.display()));
     }
     codec_audio(&o.formato)?;
-    diseno(&o.video_formato)?;
+    diseno(&o.video_formato, &o.diseno)?;
     if o.fondo != "tocadiscos" && o.fondo != "liso" {
         return Err(format!("Fondo no válido «{}»: usa tocadiscos o liso", o.fondo));
     }
