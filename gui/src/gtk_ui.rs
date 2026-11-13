@@ -4,7 +4,7 @@
 #![allow(deprecated)] // ColorButton y FileChooserNative siguen siendo lo más compatible con GTK 4.6
 
 use gtk::prelude::*;
-use gtk::{gdk, glib};
+use gtk::{gdk, gio, glib};
 use std::cell::Cell;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -525,16 +525,14 @@ fn construir(app: &gtk::Application) {
         });
     }
     // Soltar archivos sobre la ventana: una imagen va a la carátula; lo demás, a la canción.
-    let soltar = gtk::DropTarget::new(gdk::FileList::static_type(), gdk::DragAction::COPY);
+    let soltar = gtk::DropTarget::new(gio::File::static_type(), gdk::DragAction::COPY);
     {
         let ui = ui.clone();
         soltar.connect_drop(move |_, valor, _, _| {
-            let Ok(lista) = valor.get::<gdk::FileList>() else { return false };
-            for ruta in lista.files().iter().filter_map(|f| f.path()) {
-                let ext = ruta.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
-                let destino = if EXT_IMAGEN.contains(&ext.as_str()) { &ui.caratula } else { &ui.cancion };
-                destino.set_text(&ruta.to_string_lossy());
-            }
+            let Some(ruta) = valor.get::<gio::File>().ok().and_then(|f| f.path()) else { return false };
+            let ext = ruta.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+            let destino = if EXT_IMAGEN.contains(&ext.as_str()) { &ui.caratula } else { &ui.cancion };
+            destino.set_text(&ruta.to_string_lossy());
             true
         });
     }
