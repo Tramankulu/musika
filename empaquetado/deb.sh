@@ -17,11 +17,10 @@ install -Dm644 README.md "$raiz/usr/share/doc/musika/README.md"
 depende="ffmpeg, libc6"
 if [ -f gui/target/release/musika-gui ]; then
     install -Dm755 gui/target/release/musika-gui "$raiz/usr/bin/musika-gui"
-    install -Dm644 empaquetado/musika.desktop "$raiz/usr/share/applications/musika.desktop"
+    install -Dm644 empaquetado/musika.desktop "$raiz/usr/share/applications/io.github.tramankulu.musika.desktop"
     mkdir -p "$raiz/usr/share/icons/hicolor/256x256/apps"
     target/release/musika --icono "$raiz/usr/share/icons/hicolor/256x256/apps/musika.png"
-    # Librerías que la ventana carga al arrancar (no aparecen como dependencias del ejecutable).
-    depende="$depende, libgl1, libegl1, libxkbcommon0, libxkbcommon-x11-0, libx11-6, libx11-xcb1, libxcursor1, libxi6, libxrandr2, zenity | kdialog"
+    depende="$depende, libgtk-4-1"
 fi
 mkdir -p "$raiz/DEBIAN"
 cat > "$raiz/DEBIAN/control" <<CONTROL

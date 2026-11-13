@@ -60,7 +60,6 @@ struct Opciones {
     dir: Option<PathBuf>,
     caratula: Option<PathBuf>,
     color: imagen::Rgb,
-    video_formato: String,
     lufs: Option<f64>,
     pico: Option<f64>,
     fuente: Option<PathBuf>,
@@ -88,8 +87,6 @@ OPCIONES:
     -o, --dir <carpeta>         Carpeta de salida (por defecto: la de la canción)
         --caratula <imagen>     Imagen para la etiqueta del disco y el fondo del vídeo
         --color <RRGGBB>        Color de la etiqueta y del fondo  [por defecto: D9482B]
-        --video-formato <f>     horizontal (1920x1080) | vertical (1080x1920, Shorts) |
-                                cuadrado (1080x1080)
         --lufs <n>              Sonoridad a medida, p. ej. -14 (crea la salida «personalizado»)
         --pico <n>              Pico real máximo a medida en dBTP, p. ej. -1
         --forzar-nivel          Llega siempre al nivel pedido aunque haya que comprimir
@@ -138,7 +135,6 @@ fn opciones_por_defecto(entrada: PathBuf) -> Opciones {
         dir: None,
         caratula: None,
         color: (0xD9, 0x48, 0x2B),
-        video_formato: "horizontal".into(),
         lufs: None,
         pico: None,
         fuente: None,
@@ -196,7 +192,6 @@ fn parsear_args(args: &[String]) -> Res<Option<Opciones>> {
             "-o" | "--dir" => o.dir = Some(PathBuf::from(valor()?)),
             "--caratula" => o.caratula = Some(PathBuf::from(valor()?)),
             "--color" => o.color = parsear_color(&valor()?)?,
-            "--video-formato" => o.video_formato = valor()?.to_lowercase(),
             "--lufs" => o.lufs = Some(numero(&valor()?, "--lufs")?),
             "--pico" => o.pico = Some(numero(&valor()?, "--pico")?),
             "--fuente" => o.fuente = Some(PathBuf::from(valor()?)),
@@ -529,45 +524,21 @@ struct Diseno {
     barra_y: usize,
 }
 
-fn diseno(formato: &str, estilo: &str) -> Res<Diseno> {
-    let ondas = match estilo {
-        "tocadiscos" => false,
-        "ondas" => true,
-        _ => return Err(format!("Diseño no válido «{estilo}»: usa tocadiscos u ondas")),
-    };
-    Ok(match (formato, ondas) {
-        ("horizontal", false) => Diseno {
+/// Medidas de cada diseño. El vídeo es siempre horizontal, a 1920×1080.
+fn diseno(estilo: &str) -> Res<Diseno> {
+    Ok(match estilo {
+        "tocadiscos" => Diseno {
             ancho: 1920, alto: 1080, disco: 820, disco_x: 90, disco_y: 130,
             panel: (1110, 290, 750, 560), contenido: (1162, 646), centrado: false,
             titulo_y: 352, titulo_max: 72.0, ondas: (560, 120), barra_y: 734,
         },
-        ("vertical", false) => Diseno {
-            ancho: 1080, alto: 1920, disco: 800, disco_x: 100, disco_y: 220,
-            panel: (60, 1150, 960, 620), contenido: (116, 848), centrado: true,
-            titulo_y: 1212, titulo_max: 76.0, ondas: (1420, 150), barra_y: 1644,
-        },
-        ("cuadrado", false) => Diseno {
-            ancho: 1080, alto: 1080, disco: 580, disco_x: 210, disco_y: 55,
-            panel: (110, 706, 860, 356), contenido: (160, 760), centrado: true,
-            titulo_y: 734, titulo_max: 52.0, ondas: (862, 74), barra_y: 968,
-        },
-        // Diseño «ondas»: el disco centrado y los textos debajo, sin panel.
-        ("horizontal", true) => Diseno {
+        // El disco centrado y los textos debajo, sin panel.
+        "ondas" => Diseno {
             ancho: 1920, alto: 1080, disco: 600, disco_x: 660, disco_y: 130,
             panel: (0, 0, 0, 0), contenido: (560, 800), centrado: true,
             titulo_y: 806, titulo_max: 62.0, ondas: (0, 0), barra_y: 968,
         },
-        ("vertical", true) => Diseno {
-            ancho: 1080, alto: 1920, disco: 760, disco_x: 160, disco_y: 400,
-            panel: (0, 0, 0, 0), contenido: (140, 800), centrado: true,
-            titulo_y: 1380, titulo_max: 72.0, ondas: (0, 0), barra_y: 1600,
-        },
-        ("cuadrado", true) => Diseno {
-            ancho: 1080, alto: 1080, disco: 540, disco_x: 270, disco_y: 110,
-            panel: (0, 0, 0, 0), contenido: (190, 700), centrado: true,
-            titulo_y: 790, titulo_max: 54.0, ondas: (0, 0), barra_y: 958,
-        },
-        _ => return Err(format!("Formato de vídeo no válido «{formato}»: usa horizontal, vertical o cuadrado")),
+        _ => return Err(format!("Diseño no válido «{estilo}»: usa tocadiscos u ondas")),
     })
 }
 
@@ -645,7 +616,7 @@ fn mm_ss(segundos: f64) -> String {
 }
 
 fn crear_video(ff: &Ff, tmp: &Path, o: &Opciones, v: &Video) -> Res<()> {
-    let d = diseno(&o.video_formato, &o.diseno)?;
+    let d = diseno(&o.diseno)?;
     let con_ondas = o.diseno == "ondas";
     let lado = d.disco;
     let escribir = |nombre: &str, datos: &[u8]| {
@@ -948,7 +919,7 @@ fn ejecutar(o: Opciones) -> Res<()> {
         return Err(format!("No existe el archivo {}", entrada.display()));
     }
     codec_audio(&o.formato)?;
-    diseno(&o.video_formato, &o.diseno)?;
+    diseno(&o.diseno)?;
     if o.fondo != "tocadiscos" && o.fondo != "liso" {
         return Err(format!("Fondo no válido «{}»: usa tocadiscos o liso", o.fondo));
     }

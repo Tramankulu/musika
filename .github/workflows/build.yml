@@ -29,7 +29,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+          sudo apt-get install -y libgtk-4-dev
       - name: Compilar la ventana de escritorio
         run: cargo build --release --manifest-path gui/Cargo.toml
       - name: Crear el .deb (Ubuntu)
@@ -43,9 +43,9 @@ jobs:
       - name: Probar que la ventana arranca (Ubuntu)
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get install -y xvfb libgl1-mesa-dri imagemagick
+          sudo apt-get install -y xvfb imagemagick
           sudo apt-get install -y ./musika_*.deb
-          export LIBGL_ALWAYS_SOFTWARE=1
+          export GSK_RENDERER=cairo
           Xvfb :99 -screen 0 1280x900x24 &
           sleep 2
           export DISPLAY=:99

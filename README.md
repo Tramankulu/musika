@@ -21,7 +21,7 @@ Hace falta [FFmpeg](https://ffmpeg.org) (musika lo usa para el audio y el vídeo
 En Ubuntu (22.04 o posterior), el `.deb` se instala así y trae FFmpeg como dependencia:
 
 ```
-sudo apt install ./musika_0.6.0_amd64.deb
+sudo apt install ./musika_0.7.0_amd64.deb
 ```
 
 **Compilar a mano** (con [Rust](https://rustup.rs) instalado):
@@ -30,7 +30,7 @@ sudo apt install ./musika_0.6.0_amd64.deb
 cargo build --release
 ```
 
-El ejecutable queda en `target/release/musika` (`musika.exe` en Windows) y no tiene dependencias de Rust. La ventana es un proyecto aparte, en `gui/`, que sí las tiene (egui): `cargo build --release --manifest-path gui/Cargo.toml`. En Ubuntu, `sh empaquetado/deb.sh` crea después el `.deb` con las dos cosas.
+El ejecutable queda en `target/release/musika` (`musika.exe` en Windows) y no tiene dependencias de Rust. La ventana es un proyecto aparte, en `gui/`, que sí las tiene (GTK 4 en Linux, egui en Windows): `cargo build --release --manifest-path gui/Cargo.toml`. En Ubuntu, `sh empaquetado/deb.sh` crea después el `.deb` con las dos cosas.
 
 ## Uso
 
@@ -38,8 +38,8 @@ El ejecutable queda en `target/release/musika` (`musika.exe` en Windows) y no ti
 
 Hay una aplicación de escritorio, **musika-gui**, con un formulario para elegir la canción, las plataformas, el diseño del vídeo, el color, etc., y un botón *Crear*. También se puede arrastrar la canción (o la imagen de la carátula) sobre la ventana.
 
-- **Ubuntu:** tras instalar el `.deb` aparece como *musika* en el menú de aplicaciones.
-- **Windows:** descomprime el zip y abre `musika-gui.exe` (tiene que estar en la misma carpeta que `musika.exe`).
+- **Ubuntu:** tras instalar el `.deb` aparece como *musika* en el menú de aplicaciones. Es una ventana GTK 4, con los controles y diálogos del propio escritorio.
+- **Windows:** descomprime el zip y abre `musika-gui.exe` (tiene que estar en la misma carpeta que `musika.exe`). En Windows la ventana todavía no usa controles nativos (se dibuja con egui).
 
 ### Desde la terminal
 
@@ -59,7 +59,6 @@ musika <canción> [opciones]
 | `-o, --dir` | Carpeta de salida | la de la canción |
 | `--caratula` | Imagen para la etiqueta del disco y el fondo | etiqueta con el título |
 | `--color` | Color `RRGGBB` de la etiqueta y del fondo | `D9482B` |
-| `--video-formato` | `horizontal` (1920×1080), `vertical` (1080×1920) o `cuadrado` (1080×1080) | `horizontal` |
 | `--lufs`, `--pico` | Nivel a medida (LUFS y dBTP) | — |
 | `--forzar-nivel` | Llega siempre al nivel pedido aunque haya que comprimir | ganancia fija |
 | `--diseno` | Diseño del vídeo: `tocadiscos` u `ondas` | `tocadiscos` |
@@ -75,7 +74,7 @@ musika cancion.wav                                  # cancion_spotify.wav
 musika cancion.mp3 -p spotify,apple -f flac         # un archivo por plataforma
 musika cancion.wav -s video -t "Mi canción" -a "Mi grupo"
 musika cancion.wav -p todas -s ambos --caratula portada.jpg
-musika cancion.wav -s video --video-formato vertical --color 2B7BD9
+musika cancion.wav -s video --diseno ondas --color 2B7BD9
 ```
 
 Los archivos se llaman `<canción>_<plataforma>.<formato>` y `<canción>_video.mp4`.
@@ -141,4 +140,4 @@ El vídeo sale con los [ajustes de subida que recomienda YouTube](https://suppor
 - Vídeo H.264 perfil High, progresivo, 30 fps, 2 fotogramas B, GOP cerrado de medio segundo, 4:2:0 y color BT.709.
 - Audio AAC-LC estéreo a 48 kHz y 384 kbps.
 
-El formato `horizontal` (1920×1080) es el de un vídeo normal; el `vertical` (1080×1920) es el de los Shorts.
+El vídeo es siempre horizontal, en HD (1920×1080).

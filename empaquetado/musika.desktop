@@ -7,4 +7,4 @@ Exec=musika-gui
 Icon=musika
 Terminal=false
 Categories=AudioVideo;Audio;
-StartupWMClass=musika
+StartupWMClass=io.github.tramankulu.musika
