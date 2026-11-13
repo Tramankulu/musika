@@ -1,6 +1,6 @@
 [package]
 name = "musika"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2021"
 description = "Prepara una canción para Spotify, YouTube, etc. y genera un vídeo de un disco girando"
 

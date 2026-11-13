@@ -174,6 +174,13 @@ fn parsear_args(args: &[String]) -> Res<Option<Opciones>> {
                 print!("{AYUDA}");
                 return Ok(None);
             }
+            // Oculta: escribe el icono de la aplicación (lo usa el empaquetado).
+            "--icono" => {
+                let archivo = PathBuf::from(valor()?);
+                imagen::escribir_png(&archivo, 256, 256, &imagen::dibujar_disco(256, (0xD9, 0x48, 0x2B)))
+                    .map_err(|e| format!("No se pudo escribir {}: {e}", archivo.display()))?;
+                return Ok(None);
+            }
             "-l" | "--listar" => {
                 listar_plataformas();
                 return Ok(None);

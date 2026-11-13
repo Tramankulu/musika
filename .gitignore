@@ -5,3 +5,4 @@
 *.mp3
 *.m4a
 *.deb
+/gui/target

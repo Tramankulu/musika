@@ -12,13 +12,23 @@ trap 'rm -rf "$raiz"' EXIT
 
 install -Dm755 target/release/musika "$raiz/usr/bin/musika"
 install -Dm644 README.md "$raiz/usr/share/doc/musika/README.md"
+
+# Ventana de escritorio: ejecutable, entrada del menú de aplicaciones e icono.
+depende="ffmpeg, libc6"
+if [ -f gui/target/release/musika-gui ]; then
+    install -Dm755 gui/target/release/musika-gui "$raiz/usr/bin/musika-gui"
+    install -Dm644 empaquetado/musika.desktop "$raiz/usr/share/applications/musika.desktop"
+    mkdir -p "$raiz/usr/share/icons/hicolor/256x256/apps"
+    target/release/musika --icono "$raiz/usr/share/icons/hicolor/256x256/apps/musika.png"
+    depende="$depende, libgl1, libxkbcommon0, zenity | kdialog"
+fi
 mkdir -p "$raiz/DEBIAN"
 cat > "$raiz/DEBIAN/control" <<CONTROL
 Package: musika
 Version: $version
 Architecture: $arq
 Maintainer: Tramankulu <tramankulu@users.noreply.github.com>
-Depends: ffmpeg, libc6
+Depends: $depende
 Section: sound
 Priority: optional
 Homepage: https://github.com/Tramankulu/musika

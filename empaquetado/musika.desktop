@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=musika
+GenericName=Preparar canciones
+Comment=Prepara canciones para Spotify, YouTube… y crea vídeos de un disco girando
+Exec=musika-gui
+Icon=musika
+Terminal=false
+Categories=AudioVideo;Audio;
+StartupWMClass=musika
