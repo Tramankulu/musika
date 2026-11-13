@@ -20,7 +20,8 @@ if [ -f gui/target/release/musika-gui ]; then
     install -Dm644 empaquetado/musika.desktop "$raiz/usr/share/applications/musika.desktop"
     mkdir -p "$raiz/usr/share/icons/hicolor/256x256/apps"
     target/release/musika --icono "$raiz/usr/share/icons/hicolor/256x256/apps/musika.png"
-    depende="$depende, libgl1, libxkbcommon0, zenity | kdialog"
+    # Librerías que la ventana carga al arrancar (no aparecen como dependencias del ejecutable).
+    depende="$depende, libgl1, libegl1, libxkbcommon0, libxkbcommon-x11-0, libx11-6, libx11-xcb1, libxcursor1, libxi6, libxrandr2, zenity | kdialog"
 fi
 mkdir -p "$raiz/DEBIAN"
 cat > "$raiz/DEBIAN/control" <<CONTROL
