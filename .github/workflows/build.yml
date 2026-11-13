@@ -14,7 +14,8 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: ubuntu-latest
+          # Ubuntu 22.04: el ejecutable sirve en esa versión y en las posteriores.
+          - os: ubuntu-22.04
             bin: musika
             name: musika-ubuntu
           - os: windows-latest
@@ -25,9 +26,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build --release
-      - name: Empaquetar (Ubuntu)
+      - name: Crear el .deb (Ubuntu)
         if: runner.os == 'Linux'
-        run: tar -czf ${{ matrix.name }}.tar.gz -C target/release ${{ matrix.bin }}
+        run: sh empaquetado/deb.sh
       - name: Empaquetar (Windows)
         if: runner.os == 'Windows'
         run: Compress-Archive -Path target/release/${{ matrix.bin }} -DestinationPath ${{ matrix.name }}.zip
@@ -35,12 +36,12 @@ jobs:
         with:
           name: ${{ matrix.name }}
           path: |
-            ${{ matrix.name }}.tar.gz
+            musika_*.deb
             ${{ matrix.name }}.zip
       - name: Publicar release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            ${{ matrix.name }}.tar.gz
+            musika_*.deb
             ${{ matrix.name }}.zip

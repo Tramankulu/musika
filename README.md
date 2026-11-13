@@ -12,11 +12,17 @@ Hace falta [FFmpeg](https://ffmpeg.org) (musika lo usa para el audio y el vídeo
 | Sistema | Instalación |
 |---|---|
 | Windows | `winget install ffmpeg` (o copiar `ffmpeg.exe` y `ffprobe.exe` junto a `musika.exe`) |
-| Ubuntu | `sudo apt install ffmpeg` |
+| Ubuntu | `sudo apt install ffmpeg` (el `.deb` lo instala solo) |
 
 ## Instalación
 
-**Ejecutables ya compilados:** en la pestaña *Actions* del repositorio, cada compilación deja `musika-windows` y `musika-ubuntu` como artefactos. Al publicar una etiqueta `v*` (por ejemplo `git tag v0.1.0 && git push --tags`) se crea además una *release* con los dos.
+**Ejecutables ya compilados:** en la pestaña *Actions* del repositorio, cada compilación deja como artefactos `musika-windows` (un zip con `musika.exe`) y `musika-ubuntu` (el paquete `.deb`). Al publicar una etiqueta `v*` (por ejemplo `git tag v0.1.0 && git push --tags`) se crea además una *release* con los dos.
+
+En Ubuntu (22.04 o posterior), el `.deb` se instala así y trae FFmpeg como dependencia:
+
+```
+sudo apt install ./musika_0.1.0_amd64.deb
+```
 
 **Compilar a mano** (con [Rust](https://rustup.rs) instalado):
 
@@ -24,7 +30,7 @@ Hace falta [FFmpeg](https://ffmpeg.org) (musika lo usa para el audio y el vídeo
 cargo build --release
 ```
 
-El ejecutable queda en `target/release/musika` (`musika.exe` en Windows). No tiene dependencias de Rust.
+El ejecutable queda en `target/release/musika` (`musika.exe` en Windows). No tiene dependencias de Rust. En Ubuntu, `sh empaquetado/deb.sh` crea después el `.deb`.
 
 ## Uso
 
