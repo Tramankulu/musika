@@ -1,0 +1,12 @@
+[package]
+name = "musika"
+version = "0.1.0"
+edition = "2021"
+description = "Prepara una canción para Spotify, YouTube, etc. y genera un vídeo de un disco girando"
+
+[dependencies]
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true
