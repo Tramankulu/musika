@@ -36,7 +36,7 @@ El ejecutable queda en `target/release/musika` (`musika.exe` en Windows) y no ti
 
 ### Con ventana
 
-Hay una aplicación de escritorio, **musika-gui**, con un formulario para elegir la canción, las plataformas, el diseño del vídeo, el color, etc., y un botón *Crear*. También se puede arrastrar la canción (o la imagen de la carátula) sobre la ventana.
+Hay una aplicación de escritorio, **musika-gui**, con un formulario para elegir la canción, el ajuste de audio, el diseño del vídeo, el color, etc., y un botón *Crear*. También se puede arrastrar la canción (o la imagen de la carátula) sobre la ventana.
 
 - **Ubuntu:** tras instalar el `.deb` aparece como *musika* en el menú de aplicaciones. Es una ventana GTK 4, con los controles y diálogos del propio escritorio.
 - **Windows:** descomprime el zip y abre `musika-gui.exe` (tiene que estar en la misma carpeta que `musika.exe`). En Windows la ventana todavía no usa controles nativos (se dibuja con egui).

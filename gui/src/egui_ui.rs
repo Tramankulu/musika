@@ -350,7 +350,7 @@ impl eframe::App for App {
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.heading("musika");
-                ui.label("Prepara una canción para las plataformas y crea un vídeo de un disco girando.");
+                ui.label("Prepara una canción para Spotify y crea un vídeo de un disco girando.");
                 ui.add_space(10.0);
 
                 ui.add_enabled_ui(!ocupado, |ui| {
