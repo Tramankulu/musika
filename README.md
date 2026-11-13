@@ -21,7 +21,7 @@ Hace falta [FFmpeg](https://ffmpeg.org) (musika lo usa para el audio y el vídeo
 En Ubuntu (22.04 o posterior), el `.deb` se instala así y trae FFmpeg como dependencia:
 
 ```
-sudo apt install ./musika_0.8.0_amd64.deb
+sudo apt install ./musika_0.9.0_amd64.deb
 ```
 
 **Compilar a mano** (con [Rust](https://rustup.rs) instalado):
@@ -71,14 +71,14 @@ musika <canción> [opciones]
 ### Ejemplos
 
 ```
-musika cancion.wav                                  # cancion_spotify.wav
+musika cancion.wav -t "Mi canción" -a "Mi grupo"    # Mi grupo - Mi canción.wav
 musika cancion.mp3 -p spotify,apple -f flac         # un archivo por plataforma
 musika cancion.wav -s video -t "Mi canción" -a "Mi grupo"
 musika cancion.wav -p todas -s ambos --caratula portada.jpg
 musika cancion.wav -s video --diseno ondas --color 2B7BD9
 ```
 
-Los archivos se llaman `<canción>_<plataforma>.<formato>` y `<canción>_video.mp4`.
+Los archivos se llaman **`Artista - Título`**: `Artista - Título.wav` (o el formato elegido) para el audio y `Artista - Título.mp4` para el vídeo. El artista y el título salen de lo que indiques o, si no, de las etiquetas del archivo; sin artista, el nombre es solo el título. Si pides varias plataformas a la vez, cada archivo añade la suya: `Artista - Título (Apple Music).wav`.
 
 ## Qué hace con el audio
 

@@ -926,6 +926,32 @@ fn objetivos(o: &Opciones) -> Res<Vec<Objetivo>> {
     Ok(lista)
 }
 
+/// Nombre de archivo «Artista - Título», sin los caracteres que Windows o
+/// Linux no admiten en un nombre.
+fn nombre_archivo(artista: &str, titulo: &str) -> String {
+    let limpio = |t: &str| -> String {
+        let s: String = t.chars().map(|c| if c.is_control() || "\\/:*?\"<>|".contains(c) { ' ' } else { c }).collect();
+        s.split_whitespace().collect::<Vec<_>>().join(" ").trim_matches(|c| c == '.' || c == ' ').to_string()
+    };
+    let (a, t) = (limpio(artista), limpio(titulo));
+    match (a.is_empty(), t.is_empty()) {
+        (false, false) => format!("{a} - {t}"),
+        (true, false) => t,
+        (false, true) => a,
+        (true, true) => "cancion".into(),
+    }
+}
+
+/// Ruta de salida `nombre.ext` en `dir`; si coincide con el original, le añade «(musika)».
+fn ruta_salida(dir: &Path, nombre: &str, ext: &str, entrada: &Path) -> PathBuf {
+    let ruta = dir.join(format!("{nombre}.{ext}"));
+    if ruta == entrada {
+        dir.join(format!("{nombre} (musika).{ext}"))
+    } else {
+        ruta
+    }
+}
+
 struct Temporal(PathBuf);
 impl Drop for Temporal {
     fn drop(&mut self) {
@@ -962,6 +988,8 @@ fn ejecutar(o: Opciones) -> Res<()> {
     let titulo = o.titulo.clone().or(info.titulo.clone()).unwrap_or_else(|| base.clone());
     let artista = o.artista.clone().or(info.artista.clone()).unwrap_or_default();
     // WAV y FLAC conservan la frecuencia del original; los formatos con pérdida van a 44,1 o 48 kHz.
+    // Los archivos se llaman «Artista - Título».
+    let nombre = nombre_archivo(&artista, &titulo);
     let frecuencia = match o.formato.as_str() {
         "wav" | "flac" => None,
         _ => Some(if info.frecuencia == Some(44100) { 44100 } else { 48000 }),
@@ -1000,21 +1028,21 @@ fn ejecutar(o: Opciones) -> Res<()> {
     };
     if o.salida != Salida::Video {
         println!("Preparando el audio:");
-        // Sin ajuste sale un solo archivo; con ajuste, uno por plataforma.
+        // Sin ajuste sale un solo archivo; con ajuste, uno por plataforma, y
+        // solo si hay varias se distingue cada una en el nombre.
         let salidas: Vec<(String, &str, Option<&Objetivo>)> = if o.sin_ajuste {
-            vec![("sin_ajuste".into(), "Sin ajuste", None)]
+            vec![(nombre.clone(), "Sin ajuste", None)]
+        } else if lista.len() == 1 {
+            vec![(nombre.clone(), lista[0].nombre.as_str(), Some(&lista[0]))]
         } else {
-            lista.iter().map(|ob| (ob.id.clone(), ob.nombre.as_str(), Some(ob))).collect()
+            lista.iter().map(|ob| (format!("{nombre} ({})", ob.nombre), ob.nombre.as_str(), Some(ob))).collect()
         };
-        for (id, nombre, ob) in salidas {
-            let archivo = dir.join(format!("{base}_{id}.{}", o.formato));
-            if archivo == entrada {
-                return Err("El archivo de salida coincidiría con el original; elige otra carpeta con --dir.".into());
-            }
+        for (archivo, plataforma, ob) in salidas {
+            let archivo = ruta_salida(&dir, &archivo, &o.formato, &entrada);
             let d = Destino { archivo: &archivo, formato: &o.formato, frecuencia, etiquetas: &etiquetas };
             let r = ajustar(&ff, &tmp.0, &entrada, ob, &m, &d, o.forzar)?;
             anotar(&r);
-            informe(nombre, &r, &archivo);
+            informe(plataforma, &r, &archivo);
         }
     }
 
@@ -1029,7 +1057,7 @@ fn ejecutar(o: Opciones) -> Res<()> {
         let d = Destino { archivo: &master, formato: "wav", frecuencia: Some(48000), etiquetas: &[] };
         let r = ajustar(&ff, &tmp.0, &entrada, ob, &m, &d, o.forzar)?;
         anotar(&r);
-        let destino = dir.join(format!("{base}_video.mp4"));
+        let destino = ruta_salida(&dir, &nombre, "mp4", &entrada);
         println!("  Dibujando el disco y codificando; puede tardar unos minutos…");
         let v = Video { audio: &master, destino: &destino, titulo: &titulo, artista: &artista, duracion: info.duracion };
         crear_video(&ff, &tmp.0, &o, &v)?;
