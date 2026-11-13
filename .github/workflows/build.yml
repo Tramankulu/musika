@@ -58,6 +58,11 @@ jobs:
           colores=$(identify -format "%k" captura-ventana.png)
           echo "Colores distintos en la captura: $colores"
           test "$colores" -gt 50
+          # La captura, reducida, también va al registro para poder revisarla.
+          echo "CAPTURA-INICIO"
+          convert captura-ventana.png -crop 700x860+0+0 -resize 70% -quality 55 jpg:- | base64 -w0
+          echo
+          echo "CAPTURA-FIN"
           kill $pid
       - uses: actions/upload-artifact@v4
         if: runner.os == 'Linux'
