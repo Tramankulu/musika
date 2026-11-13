@@ -3,7 +3,6 @@ name: build
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
 
 permissions:
@@ -38,10 +37,28 @@ jobs:
           path: |
             musika_*.deb
             ${{ matrix.name }}.zip
-      - name: Publicar release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+
+  # Publica una release con cada subida a main, etiquetada con la versión de
+  # Cargo.toml (v0.5.0, v0.6.0…). Si esa versión ya tenía release, se sustituye.
+  release:
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
-          files: |
-            musika_*.deb
-            ${{ matrix.name }}.zip
+          path: paquetes
+          merge-multiple: true
+      - name: Publicar la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n 1)
+          tag="v$version"
+          ls -la paquetes
+          gh release delete "$tag" --cleanup-tag --yes 2>/dev/null || true
+          gh release create "$tag" paquetes/* \
+            --target "$GITHUB_SHA" \
+            --title "musika $version" \
+            --notes "Instalación en Ubuntu: \`sudo apt install ./musika_${version}_amd64.deb\`. En Windows, descomprime \`musika-windows.zip\`. Hace falta FFmpeg (el .deb lo instala solo)."

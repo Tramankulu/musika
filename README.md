@@ -16,7 +16,7 @@ Hace falta [FFmpeg](https://ffmpeg.org) (musika lo usa para el audio y el vídeo
 
 ## Instalación
 
-**Ejecutables ya compilados:** en la pestaña *Actions* del repositorio, cada compilación deja como artefactos `musika-windows` (un zip con `musika.exe`) y `musika-ubuntu` (el paquete `.deb`). Al publicar una etiqueta `v*` (por ejemplo `git tag v0.1.0 && git push --tags`) se crea además una *release* con los dos.
+**Ejecutables ya compilados:** en la página de [releases](https://github.com/Tramankulu/musika/releases) del repositorio están siempre los de la última versión: `musika-windows.zip` (con `musika.exe`) y el paquete `.deb` para Ubuntu. Se publican solos con cada subida a `main`, con la versión que indique `Cargo.toml`.
 
 En Ubuntu (22.04 o posterior), el `.deb` se instala así y trae FFmpeg como dependencia:
 
